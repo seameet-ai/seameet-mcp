@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.seameet-ai/seameet-mcp",
+  "description": "Operate the SeaMeet recorder from AI agents: start/stop screen & audio recordings, take screenshots, read live transcripts, and search meeting summaries. Local-only, bot-free.",
+  "repository": {
+    "url": "https://github.com/seameet-ai/seameet-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registry_type": "npm",
+      "registry_base_url": "https://registry.npmjs.org",
+      "identifier": "@seameet/mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environment_variables": []
+    }
+  ]
+}
