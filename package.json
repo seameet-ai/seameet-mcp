@@ -1,0 +1,48 @@
+{
+  "name": "@seameet/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for SeaMeet — let AI agents (Claude Code, Codex, Cursor) start/stop recordings, take screenshots, read live transcripts, and search meeting summaries on your desktop.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "seameet",
+    "screen-recording",
+    "meeting-recorder",
+    "transcription",
+    "ai-agent",
+    "claude",
+    "claude-code"
+  ],
+  "homepage": "https://seameet.ai/desktop-app/features/mcp-server/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seameet-ai/seameet-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/seameet-ai/seameet-mcp/issues"
+  },
+  "license": "MIT",
+  "author": "Seasalt.ai <support@seasalt.ai> (https://seasalt.ai)",
+  "type": "module",
+  "bin": {
+    "seameet-mcp": "bin/seameet-mcp.js"
+  },
+  "main": "src/index.js",
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bin/seameet-mcp.js",
+    "test": "node test/wrapper.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}
