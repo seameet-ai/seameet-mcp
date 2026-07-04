@@ -1,0 +1,70 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "seameet",
+  "display_name": "SeaMeet Recorder",
+  "version": "0.1.0",
+  "description": "Record your screen, transcribe meetings, and search AI summaries — controlled by Claude.",
+  "long_description": "Connects Claude to the SeaMeet desktop app (must be installed and running). Claude can start/stop/pause screen & audio recordings, take screenshots, read the live transcript mid-meeting, retrieve AI artifacts (summaries, transcripts, action items, key decisions, chapters, OCR), search across every recording, and save its own notes back to a recording. Everything stays on your machine: this extension talks to a localhost-only bridge inside the SeaMeet app. Download SeaMeet: https://seameet.ai/download/",
+  "author": {
+    "name": "Seasalt.ai",
+    "email": "support@seasalt.ai",
+    "url": "https://seasalt.ai"
+  },
+  "homepage": "https://seameet.ai/desktop-app/features/mcp-server/",
+  "documentation": "https://app.seameet.ai/mcp/llms.txt",
+  "support": "https://github.com/seameet-ai/seameet-mcp/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seameet-ai/seameet-mcp"
+  },
+  "license": "MIT",
+  "keywords": [
+    "screen-recording",
+    "meeting-recorder",
+    "transcription",
+    "meeting-notes",
+    "seameet"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "bin/seameet-mcp.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/bin/seameet-mcp.js"]
+    }
+  },
+  "tools": [
+    {
+      "name": "seameet_start_recording",
+      "description": "Start a screen/microphone/system-audio recording"
+    },
+    {
+      "name": "seameet_stop_recording",
+      "description": "Stop the active recording and get the saved file path"
+    },
+    {
+      "name": "seameet_take_screenshot",
+      "description": "Capture a screenshot"
+    },
+    {
+      "name": "seameet_get_live_transcript",
+      "description": "Read the live transcript while a recording is running"
+    },
+    {
+      "name": "seameet_get_artifact",
+      "description": "Read AI artifacts: summary, transcription, action items, key decisions, chapters, OCR"
+    },
+    {
+      "name": "seameet_search_text",
+      "description": "Search across every recording's transcripts and summaries"
+    }
+  ],
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": ["darwin", "win32"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

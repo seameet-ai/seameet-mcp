@@ -40,7 +40,8 @@
   },
   "scripts": {
     "start": "node bin/seameet-mcp.js",
-    "test": "node test/wrapper.test.js"
+    "test": "node test/wrapper.test.js",
+    "build:mcpb": "npx -y @anthropic-ai/mcpb validate manifest.json && npx -y @anthropic-ai/mcpb pack . dist/seameet.mcpb"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0"

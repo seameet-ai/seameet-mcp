@@ -1,0 +1,15 @@
+# Excluded from the .mcpb bundle (dev-only files; the bundle needs
+# bin/, src/, node_modules/, package.json, manifest.json, LICENSE, README.md).
+# Patterns are anchored with a leading "/" so they don't also match paths
+# inside node_modules (e.g. @modelcontextprotocol/sdk/dist/).
+/.github/
+/.claude-plugin/
+/claude-plugin/
+/test/
+/dist/
+*.mcpb
+/server.json
+/PUBLISHING.md
+/package-lock.json
+/.mcpbignore
+/.gitignore
