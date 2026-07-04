@@ -1,0 +1,26 @@
+{
+  "name": "seameet",
+  "owner": {
+    "name": "Seasalt.ai",
+    "email": "support@seasalt.ai"
+  },
+  "description": "Official SeaMeet plugins for Claude Code",
+  "plugins": [
+    {
+      "name": "seameet",
+      "source": "./claude-plugin",
+      "description": "Operate the SeaMeet desktop recorder from Claude Code: record screen/audio, transcribe meetings, capture bug reports, and turn meetings into action items.",
+      "homepage": "https://seameet.ai/desktop-app/features/mcp-server/",
+      "repository": "https://github.com/seameet-ai/seameet-mcp",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": [
+        "screen-recording",
+        "meeting-recorder",
+        "transcription",
+        "meeting-notes",
+        "mcp"
+      ]
+    }
+  ]
+}

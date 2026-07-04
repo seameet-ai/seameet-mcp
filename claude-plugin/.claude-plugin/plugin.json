@@ -1,0 +1,22 @@
+{
+  "name": "seameet",
+  "displayName": "SeaMeet Recorder",
+  "version": "0.1.0",
+  "description": "Operate the SeaMeet desktop recorder from Claude Code: record screen/audio, transcribe meetings, capture bug reports, and turn meetings into action items.",
+  "author": {
+    "name": "Seasalt.ai",
+    "email": "support@seasalt.ai",
+    "url": "https://seasalt.ai"
+  },
+  "homepage": "https://seameet.ai/desktop-app/features/mcp-server/",
+  "repository": "https://github.com/seameet-ai/seameet-mcp",
+  "license": "MIT",
+  "keywords": [
+    "screen-recording",
+    "meeting-recorder",
+    "transcription",
+    "meeting-notes",
+    "mcp",
+    "seameet"
+  ]
+}
