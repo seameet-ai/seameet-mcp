@@ -24,6 +24,15 @@ MCP server for [SeaMeet](https://seameet.ai) — lets AI agents (Claude Code, Co
 claude mcp add seameet -- npx -y @seameet/mcp
 ```
 
+Or install the [plugin](#claude-code-plugin) to also get the `/seameet` skill (guided workflows):
+
+```bash
+claude plugin marketplace add seameet-ai/seameet-mcp
+claude plugin install seameet@seameet
+```
+
+**Claude Desktop** — install the one-click [extension bundle](#claude-desktop-extension) (`.mcpb`), or use the JSON config below.
+
 **Codex CLI** (`~/.codex/config.toml`)
 
 ```toml
@@ -44,6 +53,30 @@ args = ["-y", "@seameet/mcp"]
   }
 }
 ```
+
+## Claude Desktop extension
+
+`manifest.json` in this repo is an [MCPB](https://github.com/anthropics/mcpb) (MCP Bundle, formerly DXT) manifest, so the server ships as a one-click Claude Desktop extension:
+
+```bash
+npm install
+npm run build:mcpb   # → dist/seameet.mcpb
+```
+
+Install it in Claude Desktop via **Settings → Extensions → Advanced settings → Install extension…** and pick `dist/seameet.mcpb`. No terminal needed after that — the bundle carries the server and its dependencies, and Claude Desktop runs it with its own Node.js runtime.
+
+The SeaMeet desktop app still needs to be installed and running — the extension only bridges Claude to it.
+
+## Claude Code plugin
+
+This repo doubles as a [Claude Code plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). The `seameet` plugin registers the MCP server **and** a `/seameet` skill that teaches Claude the core workflows (check app status, record + transcribe, capture a bug report, mine meetings for action items) — condensed from the canonical recipes at [app.seameet.ai/.well-known/skills](https://app.seameet.ai/.well-known/skills/index.json).
+
+```bash
+claude plugin marketplace add seameet-ai/seameet-mcp
+claude plugin install seameet@seameet
+```
+
+Then ask Claude to "record my screen" or invoke `/seameet` directly. Plugin source: [`claude-plugin/`](claude-plugin/).
 
 ## Try it
 
@@ -105,7 +138,8 @@ When the app isn't running, `tools/list` exposes a single `seameet_desktop_app_s
 
 ```bash
 npm install
-npm test   # 13 tests: credentials discovery + end-to-end stdio client against a fake bridge
+npm test             # 13 tests: credentials discovery + end-to-end stdio client against a fake bridge
+npm run build:mcpb   # validate manifest.json + pack the Claude Desktop extension into dist/seameet.mcpb
 ```
 
 ## License
