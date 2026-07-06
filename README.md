@@ -124,7 +124,8 @@ Tool failures return structured JSON your agent can branch on:
 
 | Code | Meaning |
 |---|---|
-| `app_not_running` | Desktop app is closed — ask the user to launch SeaMeet |
+| `app_not_running` | Desktop app is closed — ask the user to launch SeaMeet (`downloadUrl` + `requiredVersion` included) |
+| `app_outdated` | Desktop app is running but too old for MCP — tell the user to **update** to `requiredVersion` (from `downloadUrl`); don't reinstall the same version |
 | `app_not_ready` | App is starting up — retry in a few seconds |
 | `invalid_request` | A required parameter is missing/invalid — re-check the tool schema |
 | `path_forbidden` | `filePath` must be inside the SeaMeet save directory |

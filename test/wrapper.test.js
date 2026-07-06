@@ -26,7 +26,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import {
-  discoverCredentials, credentialsFilePath, appNotRunningPayload, STATUS_TOOL,
+  discoverCredentials, credentialsFilePath, appNotRunningPayload, appOutdatedPayload, STATUS_TOOL,
   loadCloudKey, cloudCredentialPath,
 } from '../src/index.js';
 
@@ -59,7 +59,7 @@ const FAKE_TOOLS = [
   { name: 'seameet_start_recording', description: 'Fake start tool', inputSchema: { type: 'object', properties: { source: { type: 'string' } } } },
 ];
 
-function startFakeBridge() {
+function startFakeBridge({ outdated = false } = {}) {
   const calls = [];
   const server = http.createServer((req, res) => {
     if (req.headers['x-bridge-secret'] !== SECRET) {
@@ -70,6 +70,11 @@ function startFakeBridge() {
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       if (req.method === 'GET' && req.url === '/mcp-bridge/tools') {
+        if (outdated) {
+          // Pre-3.2.0 app: the wrapper route doesn't exist yet → 404.
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not found' }));
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: true, count: FAKE_TOOLS.length, tools: FAKE_TOOLS }));
       }
@@ -129,9 +134,9 @@ function startFakeCloud() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port, state })));
 }
 
-function writeCredsFile(dir, port) {
+function writeCredsFile(dir, port, version = '3.2.0') {
   const file = path.join(dir, `creds-${port}.json`);
-  fs.writeFileSync(file, JSON.stringify({ port, secret: SECRET, pid: process.pid }));
+  fs.writeFileSync(file, JSON.stringify({ port, secret: SECRET, pid: process.pid, version }));
   return file;
 }
 
@@ -212,6 +217,7 @@ async function run() {
       const res = await c1.callTool({ name: 'seameet_status', arguments: {} });
       const body = JSON.parse(res.content[0].text);
       assert.strictEqual(body.desktop.mode, 'connected');
+      assert.strictEqual(body.desktop.version, '3.2.0'); // surfaced from creds file
       assert.strictEqual(body.cloud.mode, 'authorized');
     });
   } finally {
@@ -312,10 +318,43 @@ async function run() {
     await new Promise((r) => cloud.server.close(r));
   }
 
+  console.log('\nDesktop running but too old (pre-3.2.0 bridge):');
+  let cOld;
+  const oldBridge = await startFakeBridge({ outdated: true });
+  try {
+    const oldCreds = writeCredsFile(tmpDir, oldBridge.port, '3.1.0');
+    cOld = await connectClient({ ...unreachableCloud, SEAMEET_MCP_CREDENTIALS_FILE: oldCreds, SEAMEET_CLOUD_CREDENTIALS_FILE: path.join(tmpDir, 'nokey-old.json') });
+    await test('seameet_status → desktop outdated (installed + required version + download url)', async () => {
+      const res = await cOld.callTool({ name: 'seameet_status', arguments: {} });
+      const d = JSON.parse(res.content[0].text).desktop;
+      assert.strictEqual(d.mode, 'outdated');
+      assert.strictEqual(d.installedVersion, '3.1.0');
+      assert.strictEqual(d.requiredVersion, '3.2.0');
+      assert.ok(d.downloadUrl.includes('seameet.ai/download'));
+    });
+    await test('desktop tool while app outdated → app_outdated (not app_not_running)', async () => {
+      const res = await cOld.callTool({ name: 'seameet_take_screenshot', arguments: {} });
+      assert.strictEqual(res.isError, true);
+      const err = JSON.parse(res.content[0].text).error;
+      assert.strictEqual(err.code, 'app_outdated');
+      assert.strictEqual(err.installedVersion, '3.1.0');
+      assert.strictEqual(err.requiredVersion, '3.2.0');
+    });
+  } finally {
+    if (cOld) await cOld.close();
+    await new Promise((r) => oldBridge.server.close(r));
+  }
+
   await test('appNotRunningPayload shape', async () => {
     const p = appNotRunningPayload('seameet_x');
     assert.strictEqual(p.error.code, 'app_not_running');
     assert.strictEqual(p.error.tool, 'seameet_x');
+  });
+  await test('appOutdatedPayload shape', async () => {
+    const p = appOutdatedPayload('seameet_x', '3.1.0');
+    assert.strictEqual(p.error.code, 'app_outdated');
+    assert.strictEqual(p.error.installedVersion, '3.1.0');
+    assert.strictEqual(p.error.requiredVersion, '3.2.0');
   });
   await test('cloudCredentialPath defaults under ~/.seameet', async () => {
     assert.ok(cloudCredentialPath({}).includes('.seameet'));

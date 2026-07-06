@@ -30,6 +30,11 @@ Dual-mode. One install now works whether or not the SeaMeet desktop app is prese
   app.seameet.ai/mcp/install.md): copy-paste recipes and one-line/one-click installs for Claude
   Code, Claude Desktop, Codex (CLI + IDE), Antigravity, Cursor, OpenCode, and GitHub Copilot CLI,
   plus a generic block. Or paste one line to any coding agent and it installs itself.
+- **`app_outdated` diagnostic.** When the SeaMeet desktop app is running but too old
+  to speak the MCP bridge contract, tools now return a distinct `app_outdated` error
+  (with `installedVersion`, `requiredVersion`, and `downloadUrl`) and `seameet_status`
+  reports `desktop.mode: "outdated"` — instead of a generic "unavailable" that made
+  agents reverse-engineer the bridge. Desktop mode needs the SeaMeet app **v3.2.0+**.
 
 ### Changed
 - **BREAKING:** the fallback status tool was renamed

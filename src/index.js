@@ -42,6 +42,11 @@ const REQUEST_TIMEOUT_MS = 65000; // slightly above the app's own 60 s ceiling
 const CLOUD_TIMEOUT_MS = 30000;
 const DESKTOP_PROBE_TIMEOUT_MS = 1500;
 const REACHABILITY_TTL_MS = 5000;
+// First desktop-app build that serves the /mcp-bridge/tools + /call-tool wrapper
+// this client drives. An app older than this is running but can't do MCP desktop
+// mode — we detect it (404 on the probe) and tell the user to update, precisely.
+const MIN_DESKTOP_VERSION = '3.2.0';
+const DOWNLOAD_URL = 'https://seameet.ai/download/';
 
 const DEFAULT_REMOTE_URL = 'https://seameet-mcp-remote.seameet.workers.dev/mcp';
 const DEFAULT_DEVICE_URL = 'https://tvezjojyndcgkneyxook.supabase.co/functions/v1/mcp-device';
@@ -79,7 +84,8 @@ export function discoverCredentials(env = process.env) {
     const raw = fs.readFileSync(credentialsFilePath(env), 'utf8');
     const parsed = JSON.parse(raw);
     if (typeof parsed?.port === 'number' && typeof parsed?.secret === 'string' && parsed.secret) {
-      return { port: parsed.port, secret: parsed.secret };
+      // version is present on app builds >= 3.2.0; older apps omit it (null).
+      return { port: parsed.port, secret: parsed.secret, version: typeof parsed.version === 'string' ? parsed.version : null };
     }
   } catch {
     // missing / unreadable / corrupt — treated as "app not running"
@@ -365,11 +371,62 @@ export function appNotRunningPayload(toolName, detail) {
       code: 'app_not_running',
       message: detail || 'The SeaMeet desktop app is not running.',
       tool: toolName,
+      requiredVersion: MIN_DESKTOP_VERSION,
+      downloadUrl: DOWNLOAD_URL,
       hint:
-        'This tool needs the SeaMeet desktop app. Ask the user to launch it, then retry. ' +
-        'Download: https://seameet.ai/download/. (Cloud tools that read your synced library ' +
-        'work without the desktop app if you authorize cloud access.)',
+        `This tool needs the SeaMeet desktop app (v${MIN_DESKTOP_VERSION} or newer). Ask the user ` +
+        `to install and launch it, then retry. Download: ${DOWNLOAD_URL}. (Cloud tools that read ` +
+        'your synced library work without the desktop app if you authorize cloud access.)',
     },
+  };
+}
+
+// The app is running but older than MIN_DESKTOP_VERSION, so it doesn't serve the
+// bridge wrapper this client drives. Tell the agent exactly that — don't make it
+// reverse-engineer the bridge or reinstall a same-version build.
+export function appOutdatedPayload(toolName, installedVersion) {
+  return {
+    success: false,
+    error: {
+      code: 'app_outdated',
+      message:
+        `The SeaMeet desktop app is running but too old for MCP desktop mode` +
+        (installedVersion ? ` (installed v${installedVersion}, need v${MIN_DESKTOP_VERSION}+).` : '.'),
+      tool: toolName,
+      installedVersion: installedVersion || null,
+      requiredVersion: MIN_DESKTOP_VERSION,
+      downloadUrl: DOWNLOAD_URL,
+      hint:
+        `Ask the user to update the SeaMeet desktop app to v${MIN_DESKTOP_VERSION} or newer, then ` +
+        `retry. Download: ${DOWNLOAD_URL}. Do NOT reinstall the same version. (Cloud tools work now ` +
+        'if you authorize cloud access.)',
+    },
+  };
+}
+
+/** Build the `desktop` block of seameet_status from a resolveDesktop() result. */
+export function desktopStatus(desktop) {
+  if (desktop.state === 'available') {
+    return { mode: 'connected', version: desktop.version || undefined };
+  }
+  if (desktop.state === 'outdated') {
+    return {
+      mode: 'outdated',
+      installedVersion: desktop.version || null,
+      requiredVersion: MIN_DESKTOP_VERSION,
+      downloadUrl: DOWNLOAD_URL,
+      hint:
+        `The desktop app is running but too old for MCP — update to v${MIN_DESKTOP_VERSION}+ ` +
+        `for record/screenshot/transcript tools. Download: ${DOWNLOAD_URL}.`,
+    };
+  }
+  return {
+    mode: 'unavailable',
+    requiredVersion: MIN_DESKTOP_VERSION,
+    downloadUrl: DOWNLOAD_URL,
+    hint:
+      `Launch the SeaMeet desktop app (v${MIN_DESKTOP_VERSION}+) for record/screenshot/transcript ` +
+      `tools. Download: ${DOWNLOAD_URL}.`,
   };
 }
 
@@ -396,7 +453,10 @@ export const LOGOUT_TOOL = {
 // Mode resolution (cached)
 // ---------------------------------------------------------------------------
 
-let reachabilityCache = { at: 0, creds: null, reachable: false, tools: [] };
+// state: 'available' (app up + speaks the bridge contract), 'outdated' (app up
+// but too old for MCP — probe 404s), or 'down' (creds stale / app not running).
+// `reachable` stays as a convenience alias for state === 'available'.
+let reachabilityCache = { at: 0, creds: null, state: 'down', reachable: false, tools: [], version: null };
 
 async function resolveDesktop(env) {
   const now = Date.now();
@@ -406,20 +466,28 @@ async function resolveDesktop(env) {
     // Don't cache the "no desktop" negative. The creds-file check is a cheap
     // local stat, so re-checking every call lets us detect the app launching
     // instantly instead of after a 5 s cache window.
-    return { at: 0, creds: null, reachable: false, tools: [] };
+    return { at: 0, creds: null, state: 'down', reachable: false, tools: [], version: null };
   }
-  let reachable = false;
+  let state = 'down';
   let tools = [];
   try {
     const { statusCode, body } = await bridgeRequest(creds, 'GET', '/mcp-bridge/tools', null, DESKTOP_PROBE_TIMEOUT_MS);
-    reachable = statusCode === 200 && Array.isArray(body?.tools);
-    // The probe already fetched the inventory — cache it so tools/list doesn't
-    // make a second identical bridge request.
-    if (reachable) tools = body.tools;
+    if (statusCode === 200 && Array.isArray(body?.tools)) {
+      // The probe already fetched the inventory — cache it so tools/list doesn't
+      // make a second identical bridge request.
+      state = 'available';
+      tools = body.tools;
+    } else {
+      // The bridge answered but doesn't serve /mcp-bridge/tools — the app is
+      // running but predates the wrapper (added in v3.2.0). Not "not running".
+      state = 'outdated';
+    }
   } catch {
-    reachable = false;
+    // Connection refused / timeout → the creds are stale; the app isn't running.
+    state = 'down';
   }
-  reachabilityCache = { at: now, creds: reachable ? creds : null, reachable, tools };
+  const reachable = state === 'available';
+  reachabilityCache = { at: now, creds, state, reachable, tools, version: creds.version ?? null };
   return reachabilityCache;
 }
 
@@ -506,10 +574,7 @@ export async function createServer(env = process.env) {
       const hasKey = !!loadCloudKey(env);
       return respond({
         success: true,
-        desktop: {
-          mode: desktop.reachable ? 'connected' : 'unavailable',
-          hint: desktop.reachable ? undefined : 'Launch the SeaMeet desktop app for record/screenshot/transcript tools.',
-        },
+        desktop: desktopStatus(desktop),
         cloud: {
           mode: hasKey ? 'authorized' : 'not_authorized',
           hint: hasKey ? undefined : 'Call any cloud tool (e.g. seameet_list_recent_recordings) to authorize via the web app.',
@@ -576,7 +641,14 @@ export async function createServer(env = process.env) {
     // Otherwise it's a desktop tool. Route to the bridge if reachable.
     const desktop = await resolveDesktop(env);
     if (!desktop.reachable) {
-      return respond(appNotRunningPayload(name), true);
+      // Distinguish "running but too old" from "not running" so the agent gets an
+      // actionable answer (update vs launch/install) instead of guessing.
+      return respond(
+        desktop.state === 'outdated'
+          ? appOutdatedPayload(name, desktop.version)
+          : appNotRunningPayload(name),
+        true,
+      );
     }
     try {
       const { statusCode, body } = await bridgeRequest(desktop.creds, 'POST', '/mcp-bridge/call-tool', { name, args });
