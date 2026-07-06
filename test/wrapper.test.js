@@ -355,6 +355,8 @@ async function run() {
     assert.strictEqual(p.error.code, 'app_outdated');
     assert.strictEqual(p.error.installedVersion, '3.1.0');
     assert.strictEqual(p.error.requiredVersion, '3.2.0');
+    assert.ok(p.error.install.macos.includes('brew'));
+    assert.ok(p.error.install.windows.includes('winget'));
   });
   await test('cloudCredentialPath defaults under ~/.seameet', async () => {
     assert.ok(cloudCredentialPath({}).includes('.seameet'));

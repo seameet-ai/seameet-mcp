@@ -35,6 +35,10 @@ Dual-mode. One install now works whether or not the SeaMeet desktop app is prese
   (with `installedVersion`, `requiredVersion`, and `downloadUrl`) and `seameet_status`
   reports `desktop.mode: "outdated"` — instead of a generic "unavailable" that made
   agents reverse-engineer the bridge. Desktop mode needs the SeaMeet app **v3.2.0+**.
+  Desktop capability errors + `seameet_status` now also carry an `install` object with
+  one-command paths (`brew install --cask seameet-ai/tap/seameet` /
+  `winget install SeasaltAI.SeaMeetRecorder`) so an agent can install/update the app
+  without scraping the download page.
 
 ### Changed
 - **BREAKING:** the fallback status tool was renamed

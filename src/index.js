@@ -47,6 +47,17 @@ const REACHABILITY_TTL_MS = 5000;
 // mode — we detect it (404 on the probe) and tell the user to update, precisely.
 const MIN_DESKTOP_VERSION = '3.2.0';
 const DOWNLOAD_URL = 'https://seameet.ai/download/';
+// One-command install/update per OS, so an agent gets a copy-paste command
+// instead of a download page to scrape. downloadUrl stays the always-works
+// fallback. (Homebrew tap + winget are wired in the app's release pipeline.)
+const INSTALL_COMMANDS = {
+  macos: 'brew install --cask seameet-ai/tap/seameet',
+  windows: 'winget install SeasaltAI.SeaMeetRecorder',
+  download: DOWNLOAD_URL,
+};
+const INSTALL_HINT =
+  `Install/update: \`${INSTALL_COMMANDS.macos}\` (macOS) or ` +
+  `\`${INSTALL_COMMANDS.windows}\` (Windows), or download from ${DOWNLOAD_URL}.`;
 
 const DEFAULT_REMOTE_URL = 'https://seameet-mcp-remote.seameet.workers.dev/mcp';
 const DEFAULT_DEVICE_URL = 'https://tvezjojyndcgkneyxook.supabase.co/functions/v1/mcp-device';
@@ -373,10 +384,11 @@ export function appNotRunningPayload(toolName, detail) {
       tool: toolName,
       requiredVersion: MIN_DESKTOP_VERSION,
       downloadUrl: DOWNLOAD_URL,
+      install: INSTALL_COMMANDS,
       hint:
         `This tool needs the SeaMeet desktop app (v${MIN_DESKTOP_VERSION} or newer). Ask the user ` +
-        `to install and launch it, then retry. Download: ${DOWNLOAD_URL}. (Cloud tools that read ` +
-        'your synced library work without the desktop app if you authorize cloud access.)',
+        `to install and launch it, then retry. ${INSTALL_HINT} (Cloud tools that read your synced ` +
+        'library work without the desktop app if you authorize cloud access.)',
     },
   };
 }
@@ -396,10 +408,11 @@ export function appOutdatedPayload(toolName, installedVersion) {
       installedVersion: installedVersion || null,
       requiredVersion: MIN_DESKTOP_VERSION,
       downloadUrl: DOWNLOAD_URL,
+      install: INSTALL_COMMANDS,
       hint:
         `Ask the user to update the SeaMeet desktop app to v${MIN_DESKTOP_VERSION} or newer, then ` +
-        `retry. Download: ${DOWNLOAD_URL}. Do NOT reinstall the same version. (Cloud tools work now ` +
-        'if you authorize cloud access.)',
+        `retry. ${INSTALL_HINT} Do NOT reinstall the same version. (Cloud tools work now if you ` +
+        'authorize cloud access.)',
     },
   };
 }
@@ -415,18 +428,20 @@ export function desktopStatus(desktop) {
       installedVersion: desktop.version || null,
       requiredVersion: MIN_DESKTOP_VERSION,
       downloadUrl: DOWNLOAD_URL,
+      install: INSTALL_COMMANDS,
       hint:
-        `The desktop app is running but too old for MCP — update to v${MIN_DESKTOP_VERSION}+ ` +
-        `for record/screenshot/transcript tools. Download: ${DOWNLOAD_URL}.`,
+        `The desktop app is running but too old for MCP — update to v${MIN_DESKTOP_VERSION}+ for ` +
+        `record/screenshot/transcript tools. ${INSTALL_HINT}`,
     };
   }
   return {
     mode: 'unavailable',
     requiredVersion: MIN_DESKTOP_VERSION,
     downloadUrl: DOWNLOAD_URL,
+    install: INSTALL_COMMANDS,
     hint:
       `Launch the SeaMeet desktop app (v${MIN_DESKTOP_VERSION}+) for record/screenshot/transcript ` +
-      `tools. Download: ${DOWNLOAD_URL}.`,
+      `tools. ${INSTALL_HINT}`,
   };
 }
 
