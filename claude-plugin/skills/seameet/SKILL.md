@@ -94,7 +94,7 @@ Act on them:
 
 ## References
 
-- Full tool reference (LLM-oriented): https://app.seameet.ai/mcp/llms.txt
+- Full tool reference (LLM-oriented): https://seameet.ai/llms.txt
   (also served locally at http://localhost:3741/llms.txt while the app runs)
 - Canonical skill recipes:
   https://app.seameet.ai/.well-known/skills/index.json

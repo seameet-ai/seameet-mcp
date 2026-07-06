@@ -12,7 +12,7 @@
     "url": "https://seasalt.ai"
   },
   "homepage": "https://seameet.ai/desktop-app/features/mcp-server/",
-  "documentation": "https://app.seameet.ai/mcp/llms.txt",
+  "documentation": "https://seameet.ai/en/docs/agents/",
   "support": "https://github.com/seameet-ai/seameet-mcp/issues",
   "repository": {
     "type": "git",

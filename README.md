@@ -146,7 +146,7 @@ Just ask in plain language — the agent picks the right tool (and the right bac
 
 A thin stdio↔HTTP proxy. The SeaMeet desktop app hosts a localhost-only bridge (`127.0.0.1:3741`, fallbacks 3742/3743) authenticated with a per-launch random secret; on startup it writes credentials to `$TMPDIR/seameet-mcp-bridge-<username>.json` (mode 0600), which this server reads and proxies (`tools/list` → `GET /mcp-bridge/tools`, `tools/call` → `POST /mcp-bridge/call-tool`). Nothing leaves your machine in desktop mode. Cloud mode talks to the hosted SeaMeet worker over HTTPS with your minted key.
 
-Full tool reference (for LLMs): [app.seameet.ai/mcp/llms.txt](https://app.seameet.ai/mcp/llms.txt) — also served at `http://localhost:3741/llms.txt` while the app runs.
+Full tool reference (for LLMs): [seameet.ai/llms.txt](https://seameet.ai/llms.txt) — also served locally at `http://localhost:3741/llms.txt` while the app runs.
 
 ### Errors are machine-readable
 
