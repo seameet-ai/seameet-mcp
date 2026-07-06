@@ -283,16 +283,23 @@ async function ensureCloudAuth(env, toolName) {
   const existing = loadCloudKey(env);
   if (existing) return { key: existing };
 
-  // A device flow is already pending — poll it.
+  // Poll an in-flight device flow if we have one.
   if (pendingDevice && Date.now() < pendingDevice.expires_at) {
-    const res = await devicePoll(env, pendingDevice.device_code);
+    let res;
+    try {
+      res = await devicePoll(env, pendingDevice.device_code);
+    } catch {
+      // Transient network error — keep the flow and re-issue the challenge.
+      res = { status: 'pending' };
+    }
     if (res.status === 'approved' && res.apiKey) {
       saveCloudKey(env, res.apiKey);
       pendingDevice = null;
       return { key: res.apiKey };
     }
     if (res.error === 'key_limit') {
-      pendingDevice = null;
+      // NOT terminal: the code is still approved server-side. Preserve the flow
+      // so the next poll (after the user frees a key slot) mints the key.
       return {
         challenge: {
           success: false,
@@ -300,13 +307,17 @@ async function ensureCloudAuth(env, toolName) {
             code: 'key_limit',
             message: 'Too many active API keys.',
             tool: toolName,
-            hint: 'Revoke some keys at https://app.seameet.ai/account, then retry.',
+            hint: 'Revoke some keys at https://app.seameet.ai/account, then call this tool again.',
           },
         },
       };
     }
-    // still pending / expired → (re)issue a challenge
-    if (res.status === 'expired' || res.error) pendingDevice = null;
+    // Discard ONLY on terminal states (the code is truly gone). A transient
+    // db_error or a still-pending poll preserves the flow so the user can
+    // finish approving the code they already have.
+    if (res.status === 'expired' || res.error === 'already_consumed' || res.error === 'invalid_device_code') {
+      pendingDevice = null;
+    }
   }
 
   const device = pendingDevice && Date.now() < pendingDevice.expires_at
@@ -347,22 +358,26 @@ export const STATUS_TOOL = {
 // Mode resolution (cached)
 // ---------------------------------------------------------------------------
 
-let reachabilityCache = { at: 0, creds: null, reachable: false };
+let reachabilityCache = { at: 0, creds: null, reachable: false, tools: [] };
 
 async function resolveDesktop(env) {
   const now = Date.now();
   if (now - reachabilityCache.at < REACHABILITY_TTL_MS) return reachabilityCache;
   const creds = discoverCredentials(env);
   let reachable = false;
+  let tools = [];
   if (creds) {
     try {
       const { statusCode, body } = await bridgeRequest(creds, 'GET', '/mcp-bridge/tools', null, DESKTOP_PROBE_TIMEOUT_MS);
       reachable = statusCode === 200 && Array.isArray(body?.tools);
+      // The probe already fetched the inventory — cache it so tools/list doesn't
+      // make a second identical bridge request.
+      if (reachable) tools = body.tools;
     } catch {
       reachable = false;
     }
   }
-  reachabilityCache = { at: now, creds: reachable ? creds : null, reachable };
+  reachabilityCache = { at: now, creds: reachable ? creds : null, reachable, tools };
   return reachabilityCache;
 }
 
@@ -402,18 +417,12 @@ export async function createServer(env = process.env) {
     const tools = [];
     const seen = new Set();
 
-    // Desktop tools (live inventory) when the app is reachable.
+    // Desktop tools (live inventory) — reuse the inventory the reachability
+    // probe already fetched (no second bridge request).
     const desktop = await resolveDesktop(env);
     if (desktop.reachable) {
-      try {
-        const { statusCode, body } = await bridgeRequest(desktop.creds, 'GET', '/mcp-bridge/tools', null, DESKTOP_PROBE_TIMEOUT_MS);
-        if (statusCode === 200 && Array.isArray(body?.tools)) {
-          for (const t of body.tools) {
-            if (t?.name && !seen.has(t.name)) { tools.push(t); seen.add(t.name); }
-          }
-        }
-      } catch {
-        // ignore — desktop just dropped out
+      for (const t of desktop.tools) {
+        if (t?.name && !seen.has(t.name)) { tools.push(t); seen.add(t.name); }
       }
     }
 
@@ -473,9 +482,9 @@ export async function createServer(env = process.env) {
 
     // Cloud-owned tool → route to the remote worker (auth via device flow).
     if (cloudToolNames.has(name)) {
-      const auth = await ensureCloudAuth(env, name);
-      if (auth.challenge) return respond(auth.challenge, true);
       try {
+        const auth = await ensureCloudAuth(env, name);
+        if (auth.challenge) return respond(auth.challenge, true);
         const result = await remoteRpc(env, auth.key, 'tools/call', { name, arguments: args });
         // The worker already returns MCP tool-result shape ({content,[isError]}).
         if (result && Array.isArray(result.content)) return result;
