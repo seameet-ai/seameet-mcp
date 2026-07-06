@@ -52,7 +52,7 @@ const DOWNLOAD_URL = 'https://seameet.ai/download/';
 // fallback. (Homebrew tap + winget are wired in the app's release pipeline.)
 const INSTALL_COMMANDS = {
   macos: 'brew install --cask seameet-ai/tap/seameet',
-  windows: 'winget install SeasaltAI.SeaMeetRecorder',
+  windows: 'winget install seameet',
   download: DOWNLOAD_URL,
 };
 const INSTALL_HINT =

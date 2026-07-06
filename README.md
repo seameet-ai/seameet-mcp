@@ -18,7 +18,7 @@ It picks the richest available backend automatically (desktop first, cloud fallb
 ## Requirements
 
 - The [SeaMeet desktop app](https://seameet.ai/download/) installed and **running** (Windows / macOS)
-  — `brew install --cask seameet-ai/tap/seameet` (macOS) or `winget install SeasaltAI.SeaMeetRecorder`
+  — `brew install --cask seameet-ai/tap/seameet` (macOS) or `winget install seameet`
   (Windows). Desktop mode needs **v3.2.0+**; an older running app reports `app_outdated`.
 - Node.js ≥ 18
 

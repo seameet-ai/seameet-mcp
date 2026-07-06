@@ -37,7 +37,7 @@ Dual-mode. One install now works whether or not the SeaMeet desktop app is prese
   agents reverse-engineer the bridge. Desktop mode needs the SeaMeet app **v3.2.0+**.
   Desktop capability errors + `seameet_status` now also carry an `install` object with
   one-command paths (`brew install --cask seameet-ai/tap/seameet` /
-  `winget install SeasaltAI.SeaMeetRecorder`) so an agent can install/update the app
+  `winget install seameet`) so an agent can install/update the app
   without scraping the download page.
 
 ### Changed
