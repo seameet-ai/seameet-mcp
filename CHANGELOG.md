@@ -26,6 +26,10 @@ Dual-mode. One install now works whether or not the SeaMeet desktop app is prese
   `~/.seameet/credentials.json`.
 - New config: `SEAMEET_API_KEY`, `SEAMEET_CLOUD_CREDENTIALS_FILE`,
   `SEAMEET_REMOTE_URL`, `SEAMEET_DEVICE_URL`.
+- **One-page install for every major agent** ([INSTALL.md](INSTALL.md), also at
+  app.seameet.ai/mcp/install.md): copy-paste recipes and one-line/one-click installs for Claude
+  Code, Claude Desktop, Codex (CLI + IDE), Antigravity, Cursor, OpenCode, and GitHub Copilot CLI,
+  plus a generic block. Or paste one line to any coding agent and it installs itself.
 
 ### Changed
 - **BREAKING:** the fallback status tool was renamed

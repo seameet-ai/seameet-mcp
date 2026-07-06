@@ -1,6 +1,6 @@
 # @seameet/mcp
 
-Dual-mode MCP server for [SeaMeet](https://seameet.ai) — one install that works whether or not you have the desktop app, for AI agents (Claude Code, Codex, Cursor, Claude Desktop, Windsurf).
+Dual-mode MCP server for [SeaMeet](https://seameet.ai) — one install that works whether or not you have the desktop app, for AI agents (Claude Code, Claude Desktop, Codex, Antigravity, Cursor, OpenCode, GitHub Copilot CLI, Windsurf, and any MCP client — see [INSTALL.md](INSTALL.md)).
 
 - **Desktop mode** — when the SeaMeet desktop app is **running**, agents get the full recorder tool set (start/stop/pause recordings, screenshots, live transcript, AI artifacts, search, save-artifact — 17 tools, fetched live so new releases appear automatically). No auth; nothing leaves your machine.
 - **Cloud mode** — when the desktop app isn't there, agents read your **synced cloud library** (recordings, transcripts, summaries) and **manage outbound webhooks** over the network. Authorized by logging into the web app — **no key copy/paste**, works on a headless terminal.
@@ -22,38 +22,40 @@ It picks the richest available backend automatically (desktop first, cloud fallb
 
 ## Install
 
-**Claude Code**
+**Every tool runs the same command — `npx -y @seameet/mcp` — only the config format differs.**
+Full per-tool recipes: **[INSTALL.md](INSTALL.md)** (also at
+[app.seameet.ai/mcp/install.md](https://app.seameet.ai/mcp/install.md)).
 
-```bash
-claude mcp add seameet -- npx -y @seameet/mcp
-```
+**Let your agent do it.** Already inside a coding agent? Paste:
 
-Or install the [plugin](#claude-code-plugin) to also get the `/seameet` skill (guided workflows):
+> Install the SeaMeet MCP server — fetch `https://app.seameet.ai/mcp/install.md`, apply the section
+> for whichever tool you're running in, and tell me how to reload.
+
+**Or pick your tool:**
+
+| Tool | Fastest install |
+|---|---|
+| **Claude Code** | `claude mcp add seameet -- npx -y @seameet/mcp` |
+| **Codex CLI / IDE** | `codex mcp add seameet -- npx -y @seameet/mcp` |
+| **GitHub Copilot CLI** | `copilot mcp add seameet -- npx -y @seameet/mcp` |
+| **Cursor** | [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=seameet&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBzZWFtZWV0L21jcCJdfQ==) (one-click) |
+| **Claude Desktop** | one-click `.mcpb` bundle — see [INSTALL.md](INSTALL.md#claude-desktop) |
+| **Antigravity** · **OpenCode** · **anything else** | see [INSTALL.md](INSTALL.md) |
+
+Claude Code users can also install the [plugin](#claude-code-plugin) to add the `/seameet` skill
+(guided workflows):
 
 ```bash
 claude plugin marketplace add seameet-ai/seameet-mcp
 claude plugin install seameet@seameet
 ```
 
-**Claude Desktop** — install the one-click [extension bundle](#claude-desktop-extension) (`.mcpb`), or use the JSON config below.
-
-**Codex CLI** (`~/.codex/config.toml`)
-
-```toml
-[mcp_servers.seameet]
-command = "npx"
-args = ["-y", "@seameet/mcp"]
-```
-
-**Cursor** (`~/.cursor/mcp.json`) / **Claude Desktop** (`claude_desktop_config.json`) / **Windsurf**
+The generic block, accepted by most MCP clients:
 
 ```json
 {
   "mcpServers": {
-    "seameet": {
-      "command": "npx",
-      "args": ["-y", "@seameet/mcp"]
-    }
+    "seameet": { "command": "npx", "args": ["-y", "@seameet/mcp"] }
   }
 }
 ```
@@ -145,7 +147,7 @@ When the app isn't running, `tools/list` exposes a single `seameet_desktop_app_s
 
 ```bash
 npm install
-npm test             # 13 tests: credentials discovery + end-to-end stdio client against a fake bridge
+npm test             # 20 tests: credentials discovery + end-to-end stdio client against a fake bridge + fake cloud
 npm run build:mcpb   # validate manifest.json + pack the Claude Desktop extension into dist/seameet.mcpb
 ```
 
