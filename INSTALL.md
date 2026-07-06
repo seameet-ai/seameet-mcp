@@ -37,7 +37,7 @@ Nothing else to copy.
 | [Codex CLI](#codex-cli) | `codex mcp add seameet -- npx -y @seameet/mcp` | `~/.codex/config.toml` |
 | [Codex IDE / app](#codex-ide--app) | (shares Codex CLI config) | `~/.codex/config.toml` |
 | [Antigravity](#antigravity) | Agent panel → MCP Servers | `~/.gemini/config/mcp_config.json` |
-| [Cursor](#cursor) | [Add to Cursor](#cursor) one-click | `~/.cursor/mcp.json` |
+| [Cursor](#cursor) | [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=seameet&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBzZWFtZWV0L21jcCJdfQ==) (one-click) | `~/.cursor/mcp.json` |
 | [OpenCode](#opencode) | edit config | `opencode.json` |
 | [GitHub Copilot CLI](#github-copilot-cli) | `copilot mcp add seameet -- npx -y @seameet/mcp` | `~/.copilot/mcp-config.json` |
 | [Anything else](#generic-any-mcp-client) | generic `mcpServers` block | — |
