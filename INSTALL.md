@@ -13,10 +13,10 @@ If you're already in a coding agent (Claude Code, Codex, Cursor, Antigravity, Op
 CLI…), just paste this to it:
 
 > **Install the SeaMeet MCP server for me.** Fetch
-> `https://app.seameet.ai/mcp/install.md` (or
-> `https://raw.githubusercontent.com/seasalt-ai/seameet-mcp/main/INSTALL.md`), figure out which
-> tool you're running inside, apply the matching section by editing the right config file, and
-> tell me how to reload.
+> `https://raw.githubusercontent.com/seameet-ai/seameet-mcp/main/INSTALL.md` (the always-current
+> source; a mirror is at `https://app.seameet.ai/mcp/install.md`), figure out which tool you're
+> running inside, apply the matching section by editing the right config file, and tell me how to
+> reload.
 
 The agent reads this file, detects its own host, writes the one config entry, and confirms.
 Nothing else to copy.
@@ -248,4 +248,4 @@ you'll also get the recorder tools (start/stop recording, screenshots, transcrip
 the cloud tools appear and the first one prompts you to authorize once. See the
 [README](README.md#two-modes-one-install) for details.
 
-Trouble? <https://github.com/seasalt-ai/seameet-mcp/issues>
+Trouble? <https://github.com/seameet-ai/seameet-mcp/issues>

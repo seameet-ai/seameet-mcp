@@ -28,8 +28,9 @@ Full per-tool recipes: **[INSTALL.md](INSTALL.md)** (also at
 
 **Let your agent do it.** Already inside a coding agent? Paste:
 
-> Install the SeaMeet MCP server — fetch `https://app.seameet.ai/mcp/install.md`, apply the section
-> for whichever tool you're running in, and tell me how to reload.
+> Install the SeaMeet MCP server — fetch
+> `https://raw.githubusercontent.com/seameet-ai/seameet-mcp/main/INSTALL.md`, apply the section for
+> whichever tool you're running in, and tell me how to reload.
 
 **Or pick your tool:**
 
