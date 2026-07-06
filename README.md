@@ -12,25 +12,26 @@ It picks the richest available backend automatically and exposes the union of bo
 ## What you can do
 
 **🎙️ Record & capture** *(desktop mode)*
-- Start a recording — microphone, screen, or screen + system audio
-- Stop, and pause/resume audio-only recordings
-- Check recording status and read the **live transcript** mid-recording
-- Take a screenshot through SeaMeet
+- Start a recording — microphone, screen, or screen + system audio — `seameet_start_recording`
+- Stop — `seameet_stop_recording` · pause/resume audio-only — `seameet_pause_recording` / `seameet_resume_recording`
+- Check recording status — `seameet_recording_status` · read the **live transcript** mid-recording — `seameet_get_live_transcript`
+- Take a screenshot through SeaMeet — `seameet_take_screenshot`
 
 **📚 Work with recordings** *(desktop = local files · cloud = synced library)*
-- List recordings & screenshots; browse files in the save directory
-- Read generated **artifacts**: summary, transcript, SRT, chapters, action items, key decisions, and screenshot OCR/description
-- **Search** across artifact text
-- Get a temporary media **stream/download URL**; fetch a recording's asset bundle
-- Rename a file; save a new artifact; **regenerate a summary** from a template; list templates
+- List recordings & screenshots — `seameet_list_recordings` · browse files in the save directory — `seameet_list_files` · app settings — `seameet_get_settings`
+- Read generated **artifacts** (summary, transcript, SRT, chapters, action items, key decisions, screenshot OCR/description) — `seameet_get_artifact`
+- **Search** across artifact text — `seameet_search_text`
+- Fetch a recording's asset-bundle manifest — `seameet_get_asset_bundle`
+- Rename a file — `seameet_rename_file` · save a new artifact — `seameet_save_artifact` · **regenerate a summary** from a template — `seameet_regenerate_summary` · list templates — `seameet_list_templates`
 
-**☁️ Cloud account** *(cloud mode)*
-- List recent synced recordings and fetch their summary / transcript / chapters / action items / key decisions
-- Check storage usage
-- Create / list / update / delete outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`)
+**☁️ Cloud library** *(cloud mode)*
+- List recent synced recordings — `seameet_list_recent_recordings` · fetch summary / transcript / chapters / action items / key decisions — `seameet_get_recording`
+- Get a temporary media **stream/download URL** — `seameet_get_media_url`
+- Check storage usage — `seameet_get_usage`
+- Manage outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`) — `seameet_create_webhook` · `seameet_list_webhooks` · `seameet_update_webhook` · `seameet_delete_webhook`
 
 **🔌 Connection** *(any mode)*
-- `seameet_status` — which modes are connected · `seameet_logout` — disconnect cloud / switch accounts
+- Which modes are connected — `seameet_status` · disconnect cloud / switch accounts — `seameet_logout`
 
 That's **17 desktop tools + 8 cloud tools** (fetched live, so new releases appear automatically). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
 
@@ -92,13 +93,54 @@ claude plugin install seameet@seameet
 
 ## Try it
 
-Ask your agent:
+Just ask in plain language — the agent picks the right tool (and the right backend). A few starters:
 
 > Record my screen for 2 minutes, then give me the transcript.
 
 > What were the action items from my last meeting?
 
 > Take a screenshot and describe what's on it.
+
+<details>
+<summary><b>Desktop mode</b> — a full recording session (app running)</summary>
+
+- "What are my SeaMeet settings — where does it save recordings?"
+- "List my summary templates."
+- "List my local recordings." · "List the files in my SeaMeet save folder."
+- "What's my current recording status?"
+- "Start recording my microphone." *(or: "record my whole screen")*
+- "Check the recording status now."
+- "Show me the live transcript so far."
+- "Pause the recording." · "Resume it."
+- "Take a screenshot."
+- "Stop the recording."
+- "List my recordings again — the new one should be on top."
+- "Give me the summary and transcript of that recording."
+- "Regenerate its summary using one of my templates."
+- "Search my recordings for the word '<keyword>'."
+- "Rename that recording to 'MCP dual-mode test'."
+- "Get the full asset bundle for it."
+- "Save this text as a note/artifact on that recording: <text>."
+
+</details>
+
+<details>
+<summary><b>Cloud mode</b> — your synced library (no app needed)</summary>
+
+- "List my 5 most recent SeaMeet recordings." · "What did I record in the last 7 days?"
+- "Give me the summary of the top recording."
+- "Now show its action items and key decisions."
+- "Pull the full speaker-labeled transcript for it, and its chapters."
+- "Get me a download/stream link for that recording's media."
+- "How much SeaMeet storage am I using versus my quota?"
+- "Create a webhook to `https://webhook.site/<your-id>` that fires when AI results are ready."
+- "List my webhooks with their delivery health and signing secret."
+- "Update that webhook to also fire on `recording.synced`."
+- "Delete that webhook."
+- "What's my SeaMeet connection status?"
+- "Disconnect my SeaMeet cloud account." *(forgets the cached key; the next cloud call re-authorizes)*
+
+</details>
 
 ## How it works
 
