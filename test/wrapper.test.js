@@ -101,7 +101,7 @@ const FAKE_CLOUD_TOOLS = [
 const MINTED_KEY = 'smk_minted00000000000000000000000000000000';
 
 function startFakeCloud() {
-  const state = { approved: false, calls: [] };
+  const state = { approved: false, calls: [], rejectKey: null };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => { raw += c; });
@@ -111,6 +111,7 @@ function startFakeCloud() {
       if (req.url === '/mcp') {
         const auth = req.headers['authorization'] || '';
         if (!auth.startsWith('Bearer smk_')) return send(401, { error: 'unauthorized' });
+        if (state.rejectKey && auth === `Bearer ${state.rejectKey}`) return send(401, { error: 'unauthorized' }); // revoked
         if (body.method === 'tools/list') return send(200, { jsonrpc: '2.0', id: body.id, result: { tools: FAKE_CLOUD_TOOLS } });
         if (body.method === 'tools/call') {
           state.calls.push({ auth, name: body.params?.name, args: body.params?.arguments });
@@ -259,6 +260,26 @@ async function run() {
     });
   } finally {
     if (c2) await c2.close();
+  }
+
+  console.log('\nCloud mode, revoked cached key:');
+  let cR;
+  try {
+    // A cached key the fake cloud now rejects (revoked). tools/list must NOT drop
+    // cloud tools — it falls back to the discovery key so the agent can still call
+    // one and trigger re-auth.
+    const revokedKey = 'smk_revoked000000000000000000000000000000';
+    const revokedFile = path.join(tmpDir, `revoked-${Math.random().toString(36).slice(2)}.json`);
+    fs.writeFileSync(revokedFile, JSON.stringify({ apiKey: revokedKey }));
+    cloud.state.rejectKey = revokedKey;
+    cR = await connectClient(cloudEnv({ SEAMEET_MCP_CREDENTIALS_FILE: noDesktop, SEAMEET_CLOUD_CREDENTIALS_FILE: revokedFile }));
+    await test('revoked cached key → cloud tools still listed (discovery fallback)', async () => {
+      const names = (await cR.listTools()).tools.map((t) => t.name);
+      assert.ok(names.includes('seameet_list_recent_recordings'), 'cloud tools survive a revoked key');
+    });
+  } finally {
+    if (cR) await cR.close();
+    cloud.state.rejectKey = null;
   }
 
   console.log('\nOffline (no desktop, cloud unreachable):');

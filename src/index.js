@@ -193,11 +193,12 @@ async function postJson(url, headers, body, timeoutMs = CLOUD_TIMEOUT_MS) {
 }
 
 /** Relay a JSON-RPC method to the remote worker's /mcp with a bearer key. */
-async function remoteRpc(env, apiKey, method, params) {
+async function remoteRpc(env, apiKey, method, params, timeoutMs = CLOUD_TIMEOUT_MS) {
   const { status, body } = await postJson(
     remoteUrl(env),
     { Authorization: `Bearer ${apiKey}` },
     { jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) },
+    timeoutMs,
   );
   if (status === 401) {
     const err = new Error('cloud key rejected');
@@ -222,11 +223,24 @@ async function remoteRpc(env, apiKey, method, params) {
 // round-trip (discovery is public; only tool CALLS validate the key), so we can
 // enumerate cloud tools for the superset even before the user has authenticated.
 const CLOUD_DISCOVERY_KEY = 'smk_discovery';
+const DISCOVERY_TIMEOUT_MS = 5000; // don't let tools/list block on a slow cloud
 
-async function fetchCloudTools(env) {
-  const key = loadCloudKey(env) || CLOUD_DISCOVERY_KEY;
-  const result = await remoteRpc(env, key, 'tools/list');
-  return Array.isArray(result?.tools) ? result.tools : [];
+async function fetchCloudTools(env, timeoutMs = DISCOVERY_TIMEOUT_MS) {
+  const key = loadCloudKey(env);
+  try {
+    const result = await remoteRpc(env, key || CLOUD_DISCOVERY_KEY, 'tools/list', null, timeoutMs);
+    return Array.isArray(result?.tools) ? result.tools : [];
+  } catch (err) {
+    // If the cached key was revoked, discovery with it 401s — which would drop
+    // cloud tools from tools/list entirely, so the agent could never call one to
+    // trigger re-authorization. Fall back to the public discovery key so cloud
+    // tools stay listed and the self-healing re-auth flow can fire.
+    if (key && err.code === 'cloud_unauthorized') {
+      const result = await remoteRpc(env, CLOUD_DISCOVERY_KEY, 'tools/list', null, timeoutMs);
+      return Array.isArray(result?.tools) ? result.tools : [];
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -382,18 +396,22 @@ async function resolveDesktop(env) {
   const now = Date.now();
   if (now - reachabilityCache.at < REACHABILITY_TTL_MS) return reachabilityCache;
   const creds = discoverCredentials(env);
+  if (!creds) {
+    // Don't cache the "no desktop" negative. The creds-file check is a cheap
+    // local stat, so re-checking every call lets us detect the app launching
+    // instantly instead of after a 5 s cache window.
+    return { at: 0, creds: null, reachable: false, tools: [] };
+  }
   let reachable = false;
   let tools = [];
-  if (creds) {
-    try {
-      const { statusCode, body } = await bridgeRequest(creds, 'GET', '/mcp-bridge/tools', null, DESKTOP_PROBE_TIMEOUT_MS);
-      reachable = statusCode === 200 && Array.isArray(body?.tools);
-      // The probe already fetched the inventory — cache it so tools/list doesn't
-      // make a second identical bridge request.
-      if (reachable) tools = body.tools;
-    } catch {
-      reachable = false;
-    }
+  try {
+    const { statusCode, body } = await bridgeRequest(creds, 'GET', '/mcp-bridge/tools', null, DESKTOP_PROBE_TIMEOUT_MS);
+    reachable = statusCode === 200 && Array.isArray(body?.tools);
+    // The probe already fetched the inventory — cache it so tools/list doesn't
+    // make a second identical bridge request.
+    if (reachable) tools = body.tools;
+  } catch {
+    reachable = false;
   }
   reachabilityCache = { at: now, creds: reachable ? creds : null, reachable, tools };
   return reachabilityCache;

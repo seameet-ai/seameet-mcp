@@ -33,6 +33,12 @@ Dual-mode. One install now works whether or not the SeaMeet desktop app is prese
   just the desktop app). If you referenced the old name, update it — the tool set is
   fetched live, so agents that discover tools via `tools/list` need no change.
 - Server advertises `tools.listChanged` so clients re-list when the mode changes.
+- Cloud tools stay listed even if your cached key was revoked — `tools/list` falls
+  back to the public discovery key, so an agent can still call a cloud tool and be
+  re-prompted to re-authorize instead of the tools silently vanishing.
+- `tools/list` no longer blocks up to 30 s on a slow cloud (discovery uses a 5 s
+  timeout), and the desktop probe re-checks instantly after the app launches
+  (the "no desktop" result is no longer cached).
 
 ## [0.1.0]
 
