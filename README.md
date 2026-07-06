@@ -1,55 +1,64 @@
 # @seameet/mcp
 
-MCP server for [SeaMeet](https://seameet.ai) — lets AI agents (Claude Code, Codex, Cursor, Claude Desktop, Windsurf) operate the SeaMeet desktop recorder:
+Dual-mode MCP server for [SeaMeet](https://seameet.ai) — one install that works whether or not you have the desktop app, for AI agents (Claude Code, Claude Desktop, Codex, Antigravity, Cursor, OpenCode, GitHub Copilot CLI, Windsurf, and any MCP client — see [INSTALL.md](INSTALL.md)).
 
-- **Start / stop / pause screen & audio recordings** (`seameet_start_recording`, `seameet_stop_recording`, …)
-- **Take screenshots** (`seameet_take_screenshot`)
-- **Read the live transcript mid-meeting** (`seameet_get_live_transcript`)
-- **Read AI artifacts** — summaries, transcripts, action items, key decisions, chapters, OCR (`seameet_get_artifact`)
-- **Search across every recording** (`seameet_search_text`)
-- **Save agent-generated artifacts** back to a recording (`seameet_save_artifact`)
+- **Desktop mode** — when the SeaMeet desktop app is **running**, agents get the full recorder tool set (start/stop/pause recordings, screenshots, live transcript, AI artifacts, search, save-artifact — 17 tools, fetched live so new releases appear automatically). No auth; nothing leaves your machine.
+- **Cloud mode** — when the desktop app isn't there, agents read your **synced cloud library** (recordings, transcripts, summaries) and **manage outbound webhooks** over the network. Authorized by logging into the web app — **no key copy/paste**, works on a headless terminal.
 
-17 tools total. The inventory is fetched live from the app, so new SeaMeet releases add tools here automatically — no package update needed.
+It picks the richest available backend automatically (desktop first, cloud fallback) and exposes the union of both; a tool the current backend can't serve returns a clear, structured error.
+
+## Two modes, one install
+
+`tools/list` returns the superset of whatever's available. Call `seameet_status` any time to see the current mode(s).
+
+- **Desktop** requires the app installed **and running** — if it's installed but closed, desktop tools return `app_not_running` and you're told to launch it (cloud tools still work).
+- **Cloud** is opt-in: it never activates unless you provide `SEAMEET_API_KEY` or complete the one-time authorization. The first cloud tool call with no key starts an OAuth 2.0 Device flow — the agent shows you a short code + `https://app.seameet.ai/link`; you open it (signed in), click **Authorize**, and a read+write key is minted and cached at `~/.seameet/credentials.json`. Silent thereafter. Revoke any time under **API keys** on your account.
+  - **Disconnect / switch accounts:** call the `seameet_logout` tool (forgets the cached key + cancels a pending flow), or just `rm ~/.seameet/credentials.json`. The next cloud tool call re-authorizes.
 
 ## Requirements
 
 - The [SeaMeet desktop app](https://seameet.ai/download/) installed and **running** (Windows / macOS)
+  — `brew install --cask seameet-ai/tap/seameet` (macOS) or `winget install seameet`
+  (Windows). Desktop mode needs **v3.2.0+**; an older running app reports `app_outdated`.
 - Node.js ≥ 18
 
 ## Install
 
-**Claude Code**
+**Every tool runs the same command — `npx -y @seameet/mcp` — only the config format differs.**
+Full per-tool recipes: **[INSTALL.md](INSTALL.md)** (also at
+[app.seameet.ai/mcp/install.md](https://app.seameet.ai/mcp/install.md)).
 
-```bash
-claude mcp add seameet -- npx -y @seameet/mcp
-```
+**Let your agent do it.** Already inside a coding agent? Paste:
 
-Or install the [plugin](#claude-code-plugin) to also get the `/seameet` skill (guided workflows):
+> Install the SeaMeet MCP server — fetch
+> `https://raw.githubusercontent.com/seameet-ai/seameet-mcp/main/INSTALL.md`, apply the section for
+> whichever tool you're running in, and tell me how to reload.
+
+**Or pick your tool:**
+
+| Tool | Fastest install |
+|---|---|
+| **Claude Code** | `claude mcp add seameet -- npx -y @seameet/mcp` |
+| **Codex CLI / IDE** | `codex mcp add seameet -- npx -y @seameet/mcp` |
+| **GitHub Copilot CLI** | `copilot mcp add seameet -- npx -y @seameet/mcp` |
+| **Cursor** | [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=seameet&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBzZWFtZWV0L21jcCJdfQ==) (one-click) |
+| **Claude Desktop** | one-click `.mcpb` bundle — see [INSTALL.md](INSTALL.md#claude-desktop) |
+| **Antigravity** · **OpenCode** · **anything else** | see [INSTALL.md](INSTALL.md) |
+
+Claude Code users can also install the [plugin](#claude-code-plugin) to add the `/seameet` skill
+(guided workflows):
 
 ```bash
 claude plugin marketplace add seameet-ai/seameet-mcp
 claude plugin install seameet@seameet
 ```
 
-**Claude Desktop** — install the one-click [extension bundle](#claude-desktop-extension) (`.mcpb`), or use the JSON config below.
-
-**Codex CLI** (`~/.codex/config.toml`)
-
-```toml
-[mcp_servers.seameet]
-command = "npx"
-args = ["-y", "@seameet/mcp"]
-```
-
-**Cursor** (`~/.cursor/mcp.json`) / **Claude Desktop** (`claude_desktop_config.json`) / **Windsurf**
+The generic block, accepted by most MCP clients:
 
 ```json
 {
   "mcpServers": {
-    "seameet": {
-      "command": "npx",
-      "args": ["-y", "@seameet/mcp"]
-    }
+    "seameet": { "command": "npx", "args": ["-y", "@seameet/mcp"] }
   }
 }
 ```
@@ -117,7 +126,8 @@ Tool failures return structured JSON your agent can branch on:
 
 | Code | Meaning |
 |---|---|
-| `app_not_running` | Desktop app is closed — ask the user to launch SeaMeet |
+| `app_not_running` | Desktop app is closed — ask the user to launch SeaMeet (`downloadUrl` + `requiredVersion` included) |
+| `app_outdated` | Desktop app is running but too old for MCP — tell the user to **update** to `requiredVersion` (from `downloadUrl`); don't reinstall the same version |
 | `app_not_ready` | App is starting up — retry in a few seconds |
 | `invalid_request` | A required parameter is missing/invalid — re-check the tool schema |
 | `path_forbidden` | `filePath` must be inside the SeaMeet save directory |
@@ -131,14 +141,17 @@ When the app isn't running, `tools/list` exposes a single `seameet_desktop_app_s
 
 | Env var | Purpose |
 |---|---|
-| `SEAMEET_MCP_CREDENTIALS_FILE` | Explicit path to the credentials file |
-| `SEAMEET_BRIDGE_PORT` + `SEAMEET_BRIDGE_SECRET` | Bypass the credentials file entirely |
+| `SEAMEET_MCP_CREDENTIALS_FILE` | Explicit path to the desktop-bridge credentials file |
+| `SEAMEET_BRIDGE_PORT` + `SEAMEET_BRIDGE_SECRET` | Bypass the bridge credentials file entirely |
+| `SEAMEET_API_KEY` | Cloud API key (`smk_…`) — skips the device authorization flow |
+| `SEAMEET_CLOUD_CREDENTIALS_FILE` | Where the minted cloud key is cached (default `~/.seameet/credentials.json`) |
+| `SEAMEET_REMOTE_URL` / `SEAMEET_DEVICE_URL` | Override the cloud endpoints (default: production) |
 
 ## Development
 
 ```bash
 npm install
-npm test             # 13 tests: credentials discovery + end-to-end stdio client against a fake bridge
+npm test             # 20 tests: credentials discovery + end-to-end stdio client against a fake bridge + fake cloud
 npm run build:mcpb   # validate manifest.json + pack the Claude Desktop extension into dist/seameet.mcpb
 ```
 
