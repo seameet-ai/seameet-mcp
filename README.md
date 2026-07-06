@@ -1,15 +1,18 @@
 # @seameet/mcp
 
-MCP server for [SeaMeet](https://seameet.ai) — lets AI agents (Claude Code, Codex, Cursor, Claude Desktop, Windsurf) operate the SeaMeet desktop recorder:
+Dual-mode MCP server for [SeaMeet](https://seameet.ai) — one install that works whether or not you have the desktop app, for AI agents (Claude Code, Codex, Cursor, Claude Desktop, Windsurf).
 
-- **Start / stop / pause screen & audio recordings** (`seameet_start_recording`, `seameet_stop_recording`, …)
-- **Take screenshots** (`seameet_take_screenshot`)
-- **Read the live transcript mid-meeting** (`seameet_get_live_transcript`)
-- **Read AI artifacts** — summaries, transcripts, action items, key decisions, chapters, OCR (`seameet_get_artifact`)
-- **Search across every recording** (`seameet_search_text`)
-- **Save agent-generated artifacts** back to a recording (`seameet_save_artifact`)
+- **Desktop mode** — when the SeaMeet desktop app is **running**, agents get the full recorder tool set (start/stop/pause recordings, screenshots, live transcript, AI artifacts, search, save-artifact — 17 tools, fetched live so new releases appear automatically). No auth; nothing leaves your machine.
+- **Cloud mode** — when the desktop app isn't there, agents read your **synced cloud library** (recordings, transcripts, summaries) and **manage outbound webhooks** over the network. Authorized by logging into the web app — **no key copy/paste**, works on a headless terminal.
 
-17 tools total. The inventory is fetched live from the app, so new SeaMeet releases add tools here automatically — no package update needed.
+It picks the richest available backend automatically (desktop first, cloud fallback) and exposes the union of both; a tool the current backend can't serve returns a clear, structured error.
+
+## Two modes, one install
+
+`tools/list` returns the superset of whatever's available. Call `seameet_status` any time to see the current mode(s).
+
+- **Desktop** requires the app installed **and running** — if it's installed but closed, desktop tools return `app_not_running` and you're told to launch it (cloud tools still work).
+- **Cloud** is opt-in: it never activates unless you provide `SEAMEET_API_KEY` or complete the one-time authorization. The first cloud tool call with no key starts an OAuth 2.0 Device flow — the agent shows you a short code + `https://app.seameet.ai/link`; you open it (signed in), click **Authorize**, and a read+write key is minted and cached at `~/.seameet/credentials.json`. Silent thereafter. Revoke any time under **API keys** on your account.
 
 ## Requirements
 
@@ -131,8 +134,11 @@ When the app isn't running, `tools/list` exposes a single `seameet_desktop_app_s
 
 | Env var | Purpose |
 |---|---|
-| `SEAMEET_MCP_CREDENTIALS_FILE` | Explicit path to the credentials file |
-| `SEAMEET_BRIDGE_PORT` + `SEAMEET_BRIDGE_SECRET` | Bypass the credentials file entirely |
+| `SEAMEET_MCP_CREDENTIALS_FILE` | Explicit path to the desktop-bridge credentials file |
+| `SEAMEET_BRIDGE_PORT` + `SEAMEET_BRIDGE_SECRET` | Bypass the bridge credentials file entirely |
+| `SEAMEET_API_KEY` | Cloud API key (`smk_…`) — skips the device authorization flow |
+| `SEAMEET_CLOUD_CREDENTIALS_FILE` | Where the minted cloud key is cached (default `~/.seameet/credentials.json`) |
+| `SEAMEET_REMOTE_URL` / `SEAMEET_DEVICE_URL` | Override the cloud endpoints (default: production) |
 
 ## Development
 
