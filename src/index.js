@@ -183,7 +183,10 @@ async function postJson(url, headers, body, timeoutMs = CLOUD_TIMEOUT_MS) {
     let payload = null;
     try {
       payload = await res.json();
-    } catch {
+    } catch (err) {
+      // A timeout that fires mid-parse aborts res.json() with an AbortError —
+      // propagate it as a real timeout, don't disguise it as an empty success.
+      if (err?.name === 'AbortError' || controller.signal.aborted) throw err;
       payload = null;
     }
     return { status: res.status, body: payload };
@@ -468,19 +471,22 @@ export async function createServer(env = process.env) {
     }
 
     // Cloud tools (superset) — discovered from the worker even before auth.
-    const names = new Set();
+    // Only record the discovered set on SUCCESS; if discovery threw (offline),
+    // leave cloudToolNames as-is (null on first run) so a later list/call retries
+    // instead of being stuck desktop-only for the rest of the session.
     try {
       const cloud = await fetchCloudTools(env);
+      const names = new Set();
       for (const t of cloud) {
         if (t?.name) {
           names.add(t.name);
           if (!seen.has(t.name)) { tools.push(t); seen.add(t.name); }
         }
       }
+      cloudToolNames = names;
     } catch {
-      // cloud discovery failed (offline) — desktop-only this call
+      // cloud discovery failed (offline) — desktop-only this call; retry later
     }
-    cloudToolNames = names;
 
     if (!seen.has(STATUS_TOOL.name)) tools.push(STATUS_TOOL);
     if (!seen.has(LOGOUT_TOOL.name)) tools.push(LOGOUT_TOOL);
