@@ -186,7 +186,7 @@ async function run() {
     c1 = await connectClient(cloudEnv({ SEAMEET_MCP_CREDENTIALS_FILE: credsFile, SEAMEET_API_KEY: 'smk_testkey' }));
     await test('tools/list returns desktop ∪ cloud ∪ status', async () => {
       const names = (await c1.listTools()).tools.map((t) => t.name);
-      for (const n of ['seameet_get_settings', 'seameet_start_recording', 'seameet_list_recent_recordings', 'seameet_create_webhook', 'seameet_status']) {
+      for (const n of ['seameet_get_settings', 'seameet_start_recording', 'seameet_list_recent_recordings', 'seameet_create_webhook', 'seameet_status', 'seameet_logout']) {
         assert.ok(names.includes(n), `missing ${n} — got ${names.join(',')}`);
       }
     });
@@ -243,6 +243,15 @@ async function run() {
       const last = cloud.state.calls[cloud.state.calls.length - 1];
       assert.strictEqual(last.auth, `Bearer ${MINTED_KEY}`, 'used the minted key');
     });
+    await test('seameet_logout forgets the key → next cloud call re-challenges', async () => {
+      const lo = await c2.callTool({ name: 'seameet_logout', arguments: {} });
+      assert.ok(!lo.isError);
+      assert.strictEqual(JSON.parse(lo.content[0].text).forgotCachedKey, true);
+      // key gone + pending flow cleared → next cloud call issues a fresh challenge
+      const res = await c2.callTool({ name: 'seameet_list_recent_recordings', arguments: {} });
+      assert.strictEqual(res.isError, true);
+      assert.strictEqual(JSON.parse(res.content[0].text).error.code, 'auth_required');
+    });
     await test('desktop tool while app down → app_not_running', async () => {
       const res = await c2.callTool({ name: 'seameet_take_screenshot', arguments: {} });
       assert.strictEqual(res.isError, true);
@@ -256,9 +265,9 @@ async function run() {
   let c3;
   try {
     c3 = await connectClient({ ...unreachableCloud, SEAMEET_MCP_CREDENTIALS_FILE: noDesktop, SEAMEET_CLOUD_CREDENTIALS_FILE: path.join(tmpDir, 'nokey.json') });
-    await test('tools/list → just seameet_status', async () => {
+    await test('tools/list → just the local tools (status + logout)', async () => {
       const names = (await c3.listTools()).tools.map((t) => t.name);
-      assert.deepStrictEqual(names, ['seameet_status']);
+      assert.deepStrictEqual(names, ['seameet_status', 'seameet_logout']);
     });
   } finally {
     if (c3) await c3.close();

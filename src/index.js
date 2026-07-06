@@ -323,6 +323,14 @@ async function ensureCloudAuth(env, toolName) {
   const device = pendingDevice && Date.now() < pendingDevice.expires_at
     ? pendingDevice
     : await deviceStart(env);
+  // Backstop: the agent is supposed to relay the code from the tool-error hint,
+  // but that's not guaranteed. Also surface it on stderr — Claude Code (and most
+  // MCP clients) show MCP-server stderr in their logs — so the code is never lost.
+  process.stderr.write(
+    `[seameet-mcp] Authorize cloud access: open ` +
+    `${device.verification_uri_complete || device.verification_uri} (signed in) and confirm ` +
+    `code ${device.user_code}, then retry the tool.\n`,
+  );
   return { challenge: authChallengePayload(toolName, device) };
 }
 
@@ -351,6 +359,16 @@ export const STATUS_TOOL = {
     'Report how this SeaMeet MCP is connected: DESKTOP mode (the desktop app is running — full ' +
     'record/screenshot/transcript tools) and/or CLOUD mode (authorized access to your synced ' +
     'library + webhooks). Call this to see the current mode and how to enable the other.',
+  inputSchema: { type: 'object', properties: {} },
+};
+
+export const LOGOUT_TOOL = {
+  name: 'seameet_logout',
+  description:
+    'Disconnect CLOUD mode: forget the cached cloud API key (~/.seameet/credentials.json) and ' +
+    'cancel any pending device authorization, so the next cloud tool call re-authorizes (e.g. to ' +
+    'switch accounts). Does not touch DESKTOP mode. The key itself stays valid until you revoke ' +
+    'it under API keys at https://app.seameet.ai/account.',
   inputSchema: { type: 'object', properties: {} },
 };
 
@@ -442,6 +460,7 @@ export async function createServer(env = process.env) {
     cloudToolNames = names;
 
     if (!seen.has(STATUS_TOOL.name)) tools.push(STATUS_TOOL);
+    if (!seen.has(LOGOUT_TOOL.name)) tools.push(LOGOUT_TOOL);
     return { tools };
   });
 
@@ -469,9 +488,26 @@ export async function createServer(env = process.env) {
       });
     }
 
+    // Logout: forget the cached cloud key + cancel any pending device flow.
+    if (name === LOGOUT_TOOL.name) {
+      let forgot = false;
+      try { fs.rmSync(cloudCredentialPath(env)); forgot = true; } catch { /* nothing cached */ }
+      pendingDevice = null;
+      const envKey = typeof env.SEAMEET_API_KEY === 'string' && env.SEAMEET_API_KEY.startsWith('smk_');
+      return respond({
+        success: true,
+        forgotCachedKey: forgot,
+        message: envKey
+          ? 'Cleared any cached key, but SEAMEET_API_KEY is set in the environment, so cloud mode is still active. Unset it to fully disconnect.'
+          : forgot
+          ? 'Forgot the cached SeaMeet cloud key. The next cloud tool call will re-authorize. The key stays valid until you revoke it at https://app.seameet.ai/account.'
+          : 'No cached cloud key to forget.',
+      });
+    }
+
     // If the agent calls a tool before listing (so cloudToolNames is empty),
     // lazily discover the cloud tool set once so routing is correct.
-    if (cloudToolNames.size === 0 && name !== STATUS_TOOL.name) {
+    if (cloudToolNames.size === 0 && name !== STATUS_TOOL.name && name !== LOGOUT_TOOL.name) {
       try {
         const cloud = await fetchCloudTools(env);
         cloudToolNames = new Set(cloud.map((t) => t.name).filter(Boolean));

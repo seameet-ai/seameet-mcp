@@ -13,6 +13,7 @@ It picks the richest available backend automatically (desktop first, cloud fallb
 
 - **Desktop** requires the app installed **and running** — if it's installed but closed, desktop tools return `app_not_running` and you're told to launch it (cloud tools still work).
 - **Cloud** is opt-in: it never activates unless you provide `SEAMEET_API_KEY` or complete the one-time authorization. The first cloud tool call with no key starts an OAuth 2.0 Device flow — the agent shows you a short code + `https://app.seameet.ai/link`; you open it (signed in), click **Authorize**, and a read+write key is minted and cached at `~/.seameet/credentials.json`. Silent thereafter. Revoke any time under **API keys** on your account.
+  - **Disconnect / switch accounts:** call the `seameet_logout` tool (forgets the cached key + cancels a pending flow), or just `rm ~/.seameet/credentials.json`. The next cloud tool call re-authorizes.
 
 ## Requirements
 
