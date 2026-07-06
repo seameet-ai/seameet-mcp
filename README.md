@@ -106,7 +106,7 @@ This package is a thin stdio↔HTTP proxy. The SeaMeet desktop app hosts a local
 
 Nothing leaves your machine — the bridge is localhost-only and authenticated with a per-launch random secret.
 
-Full tool reference (for LLMs): [app.seameet.ai/mcp/llms.txt](https://app.seameet.ai/mcp/llms.txt) — also served locally at `http://localhost:3741/llms.txt` while the app runs.
+Full tool reference (for LLMs): [seameet.ai/llms.txt](https://seameet.ai/llms.txt) — also served locally at `http://localhost:3741/llms.txt` while the app runs.
 
 ## Errors are machine-readable
 
