@@ -160,7 +160,7 @@ export function loadCloudKey(env = process.env) {
 
 export function saveCloudKey(env, apiKey) {
   const file = cloudCredentialPath(env);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify({ apiKey }, null, 2), { mode: 0o600 });
   try {
     fs.chmodSync(file, 0o600);
@@ -236,6 +236,9 @@ async function fetchCloudTools(env, timeoutMs = DISCOVERY_TIMEOUT_MS) {
     // trigger re-authorization. Fall back to the public discovery key so cloud
     // tools stay listed and the self-healing re-auth flow can fire.
     if (key && err.code === 'cloud_unauthorized') {
+      // The cached key was revoked — drop it now so the next cloud tool call
+      // re-authorizes immediately instead of failing once first.
+      try { fs.rmSync(cloudCredentialPath(env)); } catch { /* nothing cached */ }
       const result = await remoteRpc(env, CLOUD_DISCOVERY_KEY, 'tools/list', null, timeoutMs);
       return Array.isArray(result?.tools) ? result.tools : [];
     }
@@ -438,8 +441,10 @@ async function loadSdk() {
 }
 
 // Cloud tool names discovered this session — used to route tools/call to the
-// cloud backend. Refreshed on every tools/list.
-let cloudToolNames = new Set();
+// cloud backend. Refreshed on every tools/list. `null` = not discovered yet;
+// a Set (even empty) = already discovered, so we don't re-probe an offline
+// cloud on every single tool call.
+let cloudToolNames = null;
 
 export async function createServer(env = process.env) {
   const { Server, StdioServerTransport, CallToolRequestSchema, ListToolsRequestSchema } = await loadSdk();
@@ -523,14 +528,16 @@ export async function createServer(env = process.env) {
       });
     }
 
-    // If the agent calls a tool before listing (so cloudToolNames is empty),
-    // lazily discover the cloud tool set once so routing is correct.
-    if (cloudToolNames.size === 0 && name !== STATUS_TOOL.name && name !== LOGOUT_TOOL.name) {
+    // If the agent calls a tool before listing (cloudToolNames not yet
+    // discovered), lazily discover the cloud tool set once so routing is correct.
+    if (cloudToolNames === null && name !== STATUS_TOOL.name && name !== LOGOUT_TOOL.name) {
       try {
         const cloud = await fetchCloudTools(env);
         cloudToolNames = new Set(cloud.map((t) => t.name).filter(Boolean));
       } catch {
-        // cloud offline — treat everything unknown as a desktop tool
+        // cloud offline — treat everything unknown as a desktop tool, and don't
+        // re-probe the offline cloud on every subsequent call this session.
+        cloudToolNames = new Set();
       }
     }
 

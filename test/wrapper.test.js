@@ -277,6 +277,9 @@ async function run() {
       const names = (await cR.listTools()).tools.map((t) => t.name);
       assert.ok(names.includes('seameet_list_recent_recordings'), 'cloud tools survive a revoked key');
     });
+    await test('revoked cached key is deleted on discovery → next call re-auths', async () => {
+      assert.ok(!fs.existsSync(revokedFile), 'revoked key file removed so the next cloud call re-authorizes');
+    });
   } finally {
     if (cR) await cR.close();
     cloud.state.rejectKey = null;
