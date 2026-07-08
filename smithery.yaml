@@ -1,0 +1,8 @@
+runtime: node
+startCommand:
+  type: stdio
+  commandFunction: |-
+    () => ({
+      command: 'npx',
+      args: ['-y', '@seameet/mcp']
+    })

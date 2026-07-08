@@ -9,12 +9,18 @@
     "seameet",
     "screen-recording",
     "meeting-recorder",
+    "meeting-notes",
     "transcription",
     "ai-agent",
+    "desktop-app",
     "claude",
-    "claude-code"
+    "claude-code",
+    "codex",
+    "cursor",
+    "webhooks",
+    "productivity"
   ],
-  "homepage": "https://seameet.ai/desktop-app/features/mcp-server/",
+  "homepage": "https://app.seameet.ai/mcp/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seameet-ai/seameet-mcp.git"
@@ -33,6 +39,12 @@
     "bin/",
     "src/",
     "README.md",
+    "INSTALL.md",
+    "CHANGELOG.md",
+    "manifest.json",
+    "server.json",
+    "glama.json",
+    "smithery.yaml",
     "LICENSE"
   ],
   "engines": {
