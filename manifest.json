@@ -42,19 +42,16 @@
     {
       "name": "seameet_meeting_brief",
       "description": "Create a concise meeting brief from a SeaMeet recording transcript and summary.",
-      "arguments": ["recording_hint"],
       "text": "Use SeaMeet MCP to find the relevant recording. Read its summary, transcript, action items, key decisions, and chapters when available. Produce a concise brief with sections: Context, Decisions, Action Items, Risks, and Follow-up Questions. Cite the recording name or asset id you used."
     },
     {
       "name": "seameet_find_action_items",
       "description": "Find action items and owners across recent SeaMeet meetings.",
-      "arguments": ["topic", "time_window"],
       "text": "Use SeaMeet MCP to search recent recordings. Prefer existing action-items artifacts, then verify against summaries or transcript sections. Return a table with action item, owner, due date if mentioned, source meeting, and confidence. Flag unresolved or ambiguous owners separately."
     },
     {
       "name": "seameet_prepare_follow_up",
       "description": "Draft a follow-up email from a SeaMeet meeting recording.",
-      "arguments": ["recording_hint", "tone"],
       "text": "Use SeaMeet MCP to locate the meeting, read the summary, key decisions, and action items, then draft a follow-up email. Include a subject line, brief recap, decisions, action items with owners, and next meeting or deadline if mentioned. Do not invent commitments that are not present in the artifacts."
     }
   ],
