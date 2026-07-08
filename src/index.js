@@ -522,8 +522,70 @@ function toText(value) {
 async function loadSdk() {
   const { Server } = await import('@modelcontextprotocol/sdk/server/index.js');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
-  const { CallToolRequestSchema, ListToolsRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
-  return { Server, StdioServerTransport, CallToolRequestSchema, ListToolsRequestSchema };
+  const {
+    CallToolRequestSchema,
+    GetPromptRequestSchema,
+    ListPromptsRequestSchema,
+    ListToolsRequestSchema,
+  } = await import('@modelcontextprotocol/sdk/types.js');
+  return {
+    Server,
+    StdioServerTransport,
+    CallToolRequestSchema,
+    GetPromptRequestSchema,
+    ListPromptsRequestSchema,
+    ListToolsRequestSchema,
+  };
+}
+
+export const SERVER_INSTRUCTIONS = [
+  'SeaMeet MCP exposes meeting memory and recorder controls through two modes.',
+  'Use seameet_status first when you need to know whether desktop recording tools or cloud library tools are available.',
+  'Desktop mode works when the SeaMeet desktop app is running and provides local recording, screenshots, live transcript, and artifact tools.',
+  'Cloud mode reads synced recordings, transcripts, summaries, share links, usage, API keys, and webhooks after the user authorizes in the SeaMeet web app.',
+  'Prefer read-only listing and artifact tools before write or recording tools. Ask the user before starting/stopping recordings, taking screenshots, renaming files, or saving generated artifacts.',
+].join(' ');
+
+export const PROMPTS = [
+  {
+    name: 'seameet_meeting_brief',
+    description: 'Create a concise meeting brief from a SeaMeet recording transcript and summary.',
+    arguments: [
+      { name: 'recording_hint', description: 'Optional title, date, participant, or file path to identify the recording.', required: false },
+    ],
+    text:
+      'Use SeaMeet MCP to find the relevant recording{{recording_hint}}. Read its summary, transcript, action items, key decisions, and chapters when available. Produce a concise brief with sections: Context, Decisions, Action Items, Risks, and Follow-up Questions. Cite the recording name or asset id you used.',
+  },
+  {
+    name: 'seameet_find_action_items',
+    description: 'Find action items and owners across recent SeaMeet meetings.',
+    arguments: [
+      { name: 'topic', description: 'Project, customer, person, or keyword to filter meetings by.', required: false },
+      { name: 'time_window', description: 'Optional time window such as last week, last 30 days, or since a date.', required: false },
+    ],
+    text:
+      'Use SeaMeet MCP to search recent recordings{{topic}}{{time_window}}. Prefer existing action-items artifacts, then verify against summaries or transcript sections. Return a table with action item, owner, due date if mentioned, source meeting, and confidence. Flag unresolved or ambiguous owners separately.',
+  },
+  {
+    name: 'seameet_prepare_follow_up',
+    description: 'Draft a follow-up email from a SeaMeet meeting recording.',
+    arguments: [
+      { name: 'recording_hint', description: 'Optional title, date, participant, or file path to identify the meeting.', required: false },
+      { name: 'tone', description: 'Optional tone, for example concise, friendly, executive, or customer-facing.', required: false },
+    ],
+    text:
+      'Use SeaMeet MCP to locate the meeting{{recording_hint}}, read the summary, key decisions, and action items, then draft a follow-up email{{tone}}. Include a subject line, brief recap, decisions, action items with owners, and next meeting or deadline if mentioned. Do not invent commitments that are not present in the artifacts.',
+  },
+];
+
+function renderPromptText(prompt, args = {}) {
+  const replacements = {
+    recording_hint: args.recording_hint ? ` matching "${args.recording_hint}"` : '',
+    topic: args.topic ? ` about "${args.topic}"` : '',
+    time_window: args.time_window ? ` from ${args.time_window}` : '',
+    tone: args.tone ? ` in a ${args.tone} tone` : '',
+  };
+  return prompt.text.replace(/\{\{(\w+)\}\}/g, (_match, key) => replacements[key] ?? '');
 }
 
 // Cloud tool names discovered this session — used to route tools/call to the
@@ -533,12 +595,52 @@ async function loadSdk() {
 let cloudToolNames = null;
 
 export async function createServer(env = process.env) {
-  const { Server, StdioServerTransport, CallToolRequestSchema, ListToolsRequestSchema } = await loadSdk();
+  const {
+    Server,
+    StdioServerTransport,
+    CallToolRequestSchema,
+    GetPromptRequestSchema,
+    ListPromptsRequestSchema,
+    ListToolsRequestSchema,
+  } = await loadSdk();
 
   const server = new Server(
     { name: 'seameet', version: '0.2.0' },
-    { capabilities: { tools: { listChanged: true } } },
+    {
+      capabilities: {
+        prompts: { listChanged: false },
+        tools: { listChanged: true },
+      },
+      instructions: SERVER_INSTRUCTIONS,
+    },
   );
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map(({ name, description, arguments: promptArguments }) => ({
+      name,
+      description,
+      arguments: promptArguments,
+    })),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const prompt = PROMPTS.find((entry) => entry.name === request.params.name);
+    if (!prompt) {
+      throw new Error(`Unknown prompt: ${request.params.name}`);
+    }
+    return {
+      description: prompt.description,
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: renderPromptText(prompt, request.params.arguments || {}),
+          },
+        },
+      ],
+    };
+  });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools = [];
