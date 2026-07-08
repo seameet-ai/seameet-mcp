@@ -36,32 +36,6 @@
       "args": ["${__dirname}/bin/seameet-mcp.js"]
     }
   },
-  "tools": [
-    {
-      "name": "seameet_start_recording",
-      "description": "Start a screen/microphone/system-audio recording"
-    },
-    {
-      "name": "seameet_stop_recording",
-      "description": "Stop the active recording and get the saved file path"
-    },
-    {
-      "name": "seameet_take_screenshot",
-      "description": "Capture a screenshot"
-    },
-    {
-      "name": "seameet_get_live_transcript",
-      "description": "Read the live transcript while a recording is running"
-    },
-    {
-      "name": "seameet_get_artifact",
-      "description": "Read AI artifacts: summary, transcription, action items, key decisions, chapters, OCR"
-    },
-    {
-      "name": "seameet_search_text",
-      "description": "Search across every recording's transcripts and summaries"
-    }
-  ],
   "tools_generated": true,
   "compatibility": {
     "platforms": ["darwin", "win32"],
