@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "seameet": {
+      "command": "npx",
+      "args": ["-y", "@seameet/mcp"]
+    }
+  }
+}
