@@ -36,6 +36,7 @@
       "args": ["${__dirname}/bin/seameet-mcp.js"]
     }
   },
+  "tools": [],
   "tools_generated": true,
   "compatibility": {
     "platforms": ["darwin", "win32"],
