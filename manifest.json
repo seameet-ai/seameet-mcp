@@ -8,7 +8,7 @@
   "long_description": "Connects Claude to SeaMeet. When the SeaMeet desktop app is installed and running, Claude can start/stop/pause screen and audio recordings, take screenshots, read the live transcript mid-meeting, retrieve AI artifacts (summaries, transcripts, action items, key decisions, chapters, OCR), search recordings, and save its own notes back to a recording. When desktop mode is unavailable, the same MCP package can authorize through the SeaMeet web app to read synced cloud recordings, transcripts, summaries, and webhooks. Download SeaMeet: https://seameet.ai/download/",
   "author": {
     "name": "Seasalt.ai",
-    "email": "support@seasalt.ai",
+    "email": "info@seameet.ai",
     "url": "https://seasalt.ai"
   },
   "homepage": "https://app.seameet.ai/mcp/",

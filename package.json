@@ -29,7 +29,7 @@
     "url": "https://github.com/seameet-ai/seameet-mcp/issues"
   },
   "license": "MIT",
-  "author": "Seasalt.ai <support@seasalt.ai> (https://seasalt.ai)",
+  "author": "SeaMeet <info@seameet.ai> (https://seameet.ai)",
   "type": "module",
   "bin": {
     "seameet-mcp": "bin/seameet-mcp.js"
