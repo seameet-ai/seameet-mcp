@@ -247,7 +247,7 @@ async function run() {
       const res = await c2.callTool({ name: 'seameet_status', arguments: {} });
       const d = JSON.parse(res.content[0].text).desktop;
       assert.strictEqual(d.mode, 'unavailable');
-      assert.strictEqual(d.install.macos, 'brew install --cask seameet');
+      assert.strictEqual(d.install.macos, 'brew install --cask seameet-ai/tap/seameet');
       assert.strictEqual(d.install.windows, 'winget install seameet');
     });
     await test('after approval → next call mints + succeeds', async () => {
@@ -338,7 +338,7 @@ async function run() {
       assert.strictEqual(d.installedVersion, '3.1.0');
       assert.strictEqual(d.requiredVersion, '3.2.0');
       assert.ok(d.downloadUrl.includes('seameet.ai/download'));
-      assert.strictEqual(d.install.macos, 'brew install --cask seameet');
+      assert.strictEqual(d.install.macos, 'brew install --cask seameet-ai/tap/seameet');
       assert.strictEqual(d.install.windows, 'winget install seameet');
     });
     await test('desktop tool while app outdated → app_outdated (not app_not_running)', async () => {
@@ -358,7 +358,7 @@ async function run() {
     const p = appNotRunningPayload('seameet_x');
     assert.strictEqual(p.error.code, 'app_not_running');
     assert.strictEqual(p.error.tool, 'seameet_x');
-    assert.strictEqual(p.error.install.macos, 'brew install --cask seameet');
+    assert.strictEqual(p.error.install.macos, 'brew install --cask seameet-ai/tap/seameet');
     assert.strictEqual(p.error.install.windows, 'winget install seameet');
   });
   await test('appOutdatedPayload shape', async () => {
@@ -366,7 +366,7 @@ async function run() {
     assert.strictEqual(p.error.code, 'app_outdated');
     assert.strictEqual(p.error.installedVersion, '3.1.0');
     assert.strictEqual(p.error.requiredVersion, '3.2.0');
-    assert.strictEqual(p.error.install.macos, 'brew install --cask seameet');
+    assert.strictEqual(p.error.install.macos, 'brew install --cask seameet-ai/tap/seameet');
     assert.strictEqual(p.error.install.windows, 'winget install seameet');
   });
   await test('cloudCredentialPath defaults under ~/.seameet', async () => {

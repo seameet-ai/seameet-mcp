@@ -4,12 +4,20 @@ All notable changes to `@seameet/mcp`. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this package uses [SemVer](https://semver.org/)
 (pre-1.0, so minor versions may include small breaking changes — called out below).
 
+## [0.2.2] - 2026-07-14
+
+### Fixed
+- `seameet_status`, desktop capability errors, and docs now use the tap-qualified
+  macOS install command `brew install --cask seameet-ai/tap/seameet`. SeaMeet is
+  distributed through the `seameet-ai/homebrew-tap` cask today, so this command
+  works for users who have not already tapped the custom repository.
+
 ## [0.2.1] - 2026-07-14
 
 ### Changed
-- `seameet_status`, desktop capability errors, and docs now recommend the canonical
-  macOS install command `brew install --cask seameet` instead of the older tap-qualified
-  command. Windows remains `winget install seameet`.
+- `seameet_status`, desktop capability errors, and docs briefly recommended the
+  short macOS install command `brew install --cask seameet`. Windows remained
+  `winget install seameet`.
 
 ## [0.2.0] - 2026-07-06
 

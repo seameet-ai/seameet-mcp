@@ -1,6 +1,6 @@
 {
   "name": "@seameet/mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Dual-mode MCP server for SeaMeet — let AI agents (Claude Code, Codex, Cursor) drive the desktop recorder when it's running, else read your synced cloud library and manage webhooks. Cloud mode authorizes by logging into the web app — no key copy/paste.",
   "keywords": [
     "mcp",

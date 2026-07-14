@@ -51,7 +51,7 @@ const DOWNLOAD_URL = 'https://seameet.ai/download/';
 // instead of a download page to scrape. downloadUrl stays the always-works
 // fallback. (Homebrew tap + winget are wired in the app's release pipeline.)
 const INSTALL_COMMANDS = {
-  macos: 'brew install --cask seameet',
+  macos: 'brew install --cask seameet-ai/tap/seameet',
   windows: 'winget install seameet',
   download: DOWNLOAD_URL,
 };
