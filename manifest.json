@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "seameet",
   "display_name": "SeaMeet Recorder",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Connect Claude to SeaMeet recordings, transcripts, summaries, screenshots, and recording controls.",
   "long_description": "Connects Claude to SeaMeet. When the SeaMeet desktop app is installed and running, Claude can start/stop/pause screen and audio recordings, take screenshots, read the live transcript mid-meeting, retrieve AI artifacts (summaries, transcripts, action items, key decisions, chapters, OCR), search recordings, and save its own notes back to a recording. When desktop mode is unavailable, the same MCP package can authorize through the SeaMeet web app to read synced cloud recordings, transcripts, summaries, and webhooks. Download SeaMeet: https://seameet.ai/download/",
   "author": {

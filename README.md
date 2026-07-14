@@ -68,7 +68,7 @@ The generic block, accepted by most MCP clients:
 
 ### Requirements
 - **Node.js ≥ 18.**
-- For desktop mode: the [SeaMeet desktop app](https://seameet.ai/download/) installed and **running** — `brew install --cask seameet-ai/tap/seameet` (macOS) or `winget install seameet` (Windows). Needs **v3.2.0+**; an older running app reports `app_outdated`.
+- For desktop mode: the [SeaMeet desktop app](https://seameet.ai/download/) installed and **running** — `brew install --cask seameet` (macOS) or `winget install seameet` (Windows). Needs **v3.2.0+**; an older running app reports `app_outdated`.
 - Cloud mode is opt-in and needs no app — the first cloud tool call starts a one-time authorization (below).
 
 ### Cloud authorization (one-time, no key copy/paste)
@@ -155,7 +155,7 @@ Tool failures return structured JSON your agent can branch on:
 ```json
 { "success": false, "error": { "code": "app_not_running", "tool": "seameet_start_recording",
   "message": "The SeaMeet desktop app is not running.",
-  "install": { "macos": "brew install --cask seameet-ai/tap/seameet", "windows": "winget install seameet" },
+  "install": { "macos": "brew install --cask seameet", "windows": "winget install seameet" },
   "hint": "Ask the user to install and launch it, then retry." } }
 ```
 
