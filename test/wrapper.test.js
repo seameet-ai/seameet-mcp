@@ -243,6 +243,13 @@ async function run() {
       assert.strictEqual(body.error.user_code, 'TEST-CODE');
       assert.ok(body.error.hint.includes('app.seameet.ai/link'));
     });
+    await test('seameet_status when desktop is unavailable carries exact desktop install commands', async () => {
+      const res = await c2.callTool({ name: 'seameet_status', arguments: {} });
+      const d = JSON.parse(res.content[0].text).desktop;
+      assert.strictEqual(d.mode, 'unavailable');
+      assert.strictEqual(d.install.macos, 'brew install --cask seameet');
+      assert.strictEqual(d.install.windows, 'winget install seameet');
+    });
     await test('after approval → next call mints + succeeds', async () => {
       cloud.state.approved = true;
       const res = await c2.callTool({ name: 'seameet_list_recent_recordings', arguments: {} });
@@ -331,6 +338,8 @@ async function run() {
       assert.strictEqual(d.installedVersion, '3.1.0');
       assert.strictEqual(d.requiredVersion, '3.2.0');
       assert.ok(d.downloadUrl.includes('seameet.ai/download'));
+      assert.strictEqual(d.install.macos, 'brew install --cask seameet');
+      assert.strictEqual(d.install.windows, 'winget install seameet');
     });
     await test('desktop tool while app outdated → app_outdated (not app_not_running)', async () => {
       const res = await cOld.callTool({ name: 'seameet_take_screenshot', arguments: {} });
@@ -349,14 +358,16 @@ async function run() {
     const p = appNotRunningPayload('seameet_x');
     assert.strictEqual(p.error.code, 'app_not_running');
     assert.strictEqual(p.error.tool, 'seameet_x');
+    assert.strictEqual(p.error.install.macos, 'brew install --cask seameet');
+    assert.strictEqual(p.error.install.windows, 'winget install seameet');
   });
   await test('appOutdatedPayload shape', async () => {
     const p = appOutdatedPayload('seameet_x', '3.1.0');
     assert.strictEqual(p.error.code, 'app_outdated');
     assert.strictEqual(p.error.installedVersion, '3.1.0');
     assert.strictEqual(p.error.requiredVersion, '3.2.0');
-    assert.ok(p.error.install.macos.includes('brew'));
-    assert.ok(p.error.install.windows.includes('winget'));
+    assert.strictEqual(p.error.install.macos, 'brew install --cask seameet');
+    assert.strictEqual(p.error.install.windows, 'winget install seameet');
   });
   await test('cloudCredentialPath defaults under ~/.seameet', async () => {
     assert.ok(cloudCredentialPath({}).includes('.seameet'));

@@ -4,6 +4,13 @@ All notable changes to `@seameet/mcp`. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this package uses [SemVer](https://semver.org/)
 (pre-1.0, so minor versions may include small breaking changes — called out below).
 
+## [0.2.1] - 2026-07-14
+
+### Changed
+- `seameet_status`, desktop capability errors, and docs now recommend the canonical
+  macOS install command `brew install --cask seameet` instead of the older tap-qualified
+  command. Windows remains `winget install seameet`.
+
 ## [0.2.0] - 2026-07-06
 
 Dual-mode. One install now works whether or not the SeaMeet desktop app is present.
@@ -36,7 +43,7 @@ Dual-mode. One install now works whether or not the SeaMeet desktop app is prese
   reports `desktop.mode: "outdated"` — instead of a generic "unavailable" that made
   agents reverse-engineer the bridge. Desktop mode needs the SeaMeet app **v3.2.0+**.
   Desktop capability errors + `seameet_status` now also carry an `install` object with
-  one-command paths (`brew install --cask seameet-ai/tap/seameet` /
+  one-command paths (`brew install --cask seameet` /
   `winget install seameet`) so an agent can install/update the app
   without scraping the download page.
 
