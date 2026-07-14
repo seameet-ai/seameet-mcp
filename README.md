@@ -191,6 +191,11 @@ npm run build:mcpb   # validate manifest.json + pack the Claude Desktop extensio
 
 Releasing is automated — see [PUBLISHING.md](PUBLISHING.md).
 
+## Legal
+
+- Terms: https://seameet.ai/en/terms/
+- Privacy: https://seameet.ai/en/privacy/
+
 ## License
 
-MIT © [Seasalt.ai](https://seasalt.ai)
+MIT © [SeaMeet.ai](https://seameet.ai)

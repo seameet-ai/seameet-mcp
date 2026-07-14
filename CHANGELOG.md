@@ -4,6 +4,12 @@ All notable changes to `@seameet/mcp`. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this package uses [SemVer](https://semver.org/)
 (pre-1.0, so minor versions may include small breaking changes — called out below).
 
+## [0.2.3] - 2026-07-14
+
+### Changed
+- MCPB extension metadata now lists SeaMeet.ai as the author/developer and links
+  to SeaMeet terms and privacy pages.
+
 ## [0.2.2] - 2026-07-14
 
 ### Fixed
