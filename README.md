@@ -25,7 +25,7 @@ It picks the richest available backend automatically and exposes the union of bo
 - Rename a file — `seameet_rename_file` · save a new artifact — `seameet_save_artifact` · **regenerate a summary** from a template — `seameet_regenerate_summary` · list templates — `seameet_list_templates`
 
 **☁️ Cloud library** *(cloud mode)*
-- List recent synced recordings — `seameet_list_recent_recordings` · fetch summary / transcript / chapters / action items / key decisions — `seameet_get_recording`
+- List recent synced recordings, including files you transcribed on [app.seameet.ai](https://app.seameet.ai/transcribe) — `seameet_list_recent_recordings` · fetch the summary, the speaker-labeled transcript (paged for long recordings) and chapters, plus action items and key decisions for desktop recordings — `seameet_get_recording`
 - Get a temporary media **stream/download URL** — `seameet_get_media_url`
 - Check storage usage — `seameet_get_usage`
 - Manage outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`) — `seameet_create_webhook` · `seameet_list_webhooks` · `seameet_update_webhook` · `seameet_delete_webhook`
