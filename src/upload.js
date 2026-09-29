@@ -147,29 +147,32 @@ function envKeyInUse(env) {
  * a re-run would upload a duplicate.
  */
 export function hintFor(code, ctx = {}) {
+  // The web app the user signs in to (SEAMEET_WEB_URL): DEV hints point at DEV.
+  const site = (ctx.site || DEFAULT_WEB_URL).replace(/\/$/, '');
+  const host = site.replace(/^https?:\/\//, '');
   const w = ctx.webUrl;
   switch (code) {
     case 'auth_required':
       return ctx.envKey
-        ? 'The SEAMEET_API_KEY set in your environment was rejected (revoked?); replace it with a valid key from https://app.seameet.ai/account, or unset it to authorize in the browser instead.'
+        ? `The SEAMEET_API_KEY set in your environment was rejected (revoked?); replace it with a valid key from ${site}/account, or unset it to authorize in the browser instead.`
         : 'Your SeaMeet cloud key was rejected (revoked?) and has been forgotten; call this tool again to re-authorize in the browser.';
     case 'insufficient_scope':
       if (w) return `The transcription service needs a key with write access, so transcription did not start; the file is saved, so open ${w} to start transcription there.`;
       return ctx.envKey
-        ? 'The SEAMEET_API_KEY set in your environment is read-only; replace it with a read+write key from https://app.seameet.ai/account.'
+        ? `The SEAMEET_API_KEY set in your environment is read-only; replace it with a read+write key from ${site}/account.`
         : 'This needs a SeaMeet key with write access; call seameet_logout, then call this tool again to authorize a read+write key.';
     case 'free_exhausted':
       return w
-        ? `Your free transcription hours are used up; upgrade at app.seameet.ai, then open ${w} to transcribe this file.`
-        : 'Your free transcription hours are used up; upgrade at app.seameet.ai to keep transcribing.';
+        ? `Your free transcription hours are used up; upgrade at ${host}, then open ${w} to transcribe this file.`
+        : `Your free transcription hours are used up; upgrade at ${host} to keep transcribing.`;
     case 'import_cap_reached':
       return w
         ? `You've used this billing period's transcription hours; the file is saved, so open ${w} to transcribe it once your hours renew.`
-        : "You've used this billing period's transcription hours; they renew with your next billing period, and app.seameet.ai/account shows when.";
+        : `You've used this billing period's transcription hours; they renew with your next billing period, and ${host}/account shows when.`;
     case 'not_entitled':
       return w
-        ? `This SeaMeet account can't transcribe files yet; check your plan at app.seameet.ai, then open ${w} to transcribe this file.`
-        : "This SeaMeet account can't transcribe files yet; sign in at app.seameet.ai to check your plan.";
+        ? `This SeaMeet account can't transcribe files yet; check your plan at ${host}, then open ${w} to transcribe this file.`
+        : `This SeaMeet account can't transcribe files yet; sign in at ${host} to check your plan.`;
     case 'disabled':
       return w
         ? `Transcription is turned off for this SeaMeet account; contact SeaMeet support at info@seameet.ai, and the file stays in your library at ${w}.`
@@ -190,10 +193,10 @@ export function hintFor(code, ctx = {}) {
       return `SeaMeet was still finishing the upload, so transcription did not start; open ${w} in a minute to start transcription there.`;
     case 'too_large':
       return ctx.quota
-        ? 'Your SeaMeet cloud storage is full; free up space or upgrade at app.seameet.ai, then try again.'
-        : 'Files over 512 MB: use app.seameet.ai, which can extract the audio track.';
+        ? `Your SeaMeet cloud storage is full; free up space or upgrade at ${host}, then try again.`
+        : `Files over 512 MB: use ${host}, which can extract the audio track.`;
     case 'insufficient_allowance':
-      return `This file is about ${ctx.estimatedMinutes} minutes but you have ${ctx.hoursLeft} hours of transcription left; upgrade at app.seameet.ai or choose a shorter file.`;
+      return `This file is about ${ctx.estimatedMinutes} minutes but you have ${ctx.hoursLeft} hours of transcription left; upgrade at ${host} or choose a shorter file.`;
     case 'unsupported_type':
       return `SeaMeet can transcribe ${ALLOWED_EXTENSIONS.join(', ')} files; convert this one to one of those formats and try again.`;
     case 'empty_file':
@@ -711,6 +714,7 @@ async function runUpload({
   apiTimeoutMs = API_TIMEOUT_MS,
 } = {}, file) {
   const cfg = uploadConfig(env);
+  const hint = (code, ctx = {}) => hintFor(code, { site: cfg.webUrl, ...ctx });
   const envKey = envKeyInUse(env);
   const { handle } = file;
 
@@ -738,7 +742,7 @@ async function runUpload({
   const cancelled = (step, extra = {}) => toolError(
     'cancelled',
     'The request was cancelled.',
-    hintFor('cancelled', { assetId, webUrl: uploadComplete ? webUrlOf() : undefined, cleanup: extra.cleanup }),
+    hint('cancelled', { assetId, webUrl: uploadComplete ? webUrlOf() : undefined, cleanup: extra.cleanup }),
     { ...(step ? { step } : {}), ...(assetId ? { assetId } : {}), ...(uploadComplete ? { webUrl: webUrlOf() } : {}), ...extra },
   );
 
@@ -752,18 +756,18 @@ async function runUpload({
     const ctxExtras = { ...(assetId ? { assetId } : {}), ...(webUrl ? { webUrl } : {}), ...extras };
     if (mapped?.auth) {
       try { onUnauthorized?.(); } catch { /* best-effort */ }
-      return toolError('auth_required', 'Your SeaMeet cloud key was rejected.', hintFor('auth_required', { envKey }), ctxExtras);
+      return toolError('auth_required', 'Your SeaMeet cloud key was rejected.', hint('auth_required', { envKey }), ctxExtras);
     }
     if (mapped) {
       const message = mapped.sttUnauthorized
         ? 'The transcription service did not accept this key (it may not support API keys yet).'
         : err.message;
-      return toolError(mapped.code, message, hintFor(mapped.code, { envKey, quota: mapped.quota, webUrl }), ctxExtras);
+      return toolError(mapped.code, message, hint(mapped.code, { envKey, quota: mapped.quota, webUrl }), ctxExtras);
     }
     return toolError(
       fallbackCode,
       err?.message || String(err),
-      hintFor(fallbackCode, { step: extras.step, cleanup: extras.cleanup, webUrl }),
+      hint(fallbackCode, { step: extras.step, cleanup: extras.cleanup, webUrl }),
       ctxExtras,
     );
   };
@@ -774,12 +778,12 @@ async function runUpload({
     ext: file.ext, sizeBytes: file.sizeBytes, name: path.basename(file.filePath), parseStream, timeoutMs: probeTimeoutMs, signal,
   });
   if (signal?.aborted) return cancelled();
-  const estimatedMinutes = estimatedDurationMs !== undefined ? Math.round(estimatedDurationMs / 60000) : null;
+  const estimatedMinutes = estimatedDurationMs !== undefined ? Math.max(1, Math.ceil(estimatedDurationMs / 60000)) : null;
   if (estimatedDurationMs !== undefined && estimatedDurationMs > MAX_SESSION_MS) {
     return toolError(
       'session_too_long',
       `The recording is about ${estimatedMinutes} minutes; one file can be at most 5 hours.`,
-      hintFor('session_too_long'),
+      hint('session_too_long'),
       { estimatedDurationMs },
     );
   }
@@ -796,17 +800,17 @@ async function runUpload({
   if (signal?.aborted) return cancelled();
   if (budget && typeof budget === 'object') {
     if (budget.dailyRemaining === 0) {
-      return toolError('daily_import_limit', 'The daily upload limit is reached.', hintFor('daily_import_limit'));
+      return toolError('daily_import_limit', 'The daily upload limit is reached.', hint('daily_import_limit'));
     }
     if (budget.queueRemaining === 0) {
-      return toolError('queue_full', 'Too many files are already transcribing.', hintFor('queue_full'));
+      return toolError('queue_full', 'Too many files are already transcribing.', hint('queue_full'));
     }
     if (estimatedDurationMs !== undefined && Number.isFinite(budget.availableMs) && estimatedDurationMs > budget.availableMs) {
       const hoursLeft = (budget.availableMs / 3600000).toFixed(1);
       return toolError(
         'insufficient_allowance',
         `The file needs about ${estimatedMinutes} minutes; ${hoursLeft} hours of transcription are left.`,
-        hintFor('insufficient_allowance', { estimatedMinutes, hoursLeft }),
+        hint('insufficient_allowance', { estimatedMinutes, hoursLeft }),
         { availableMs: budget.availableMs, estimatedDurationMs },
       );
     }
@@ -955,7 +959,7 @@ async function runUpload({
   if (failure) {
     const cleanup = await abortMultipart();
     if (failure.err?.fileChanged) {
-      return toolError('file_changed', failure.err.message, hintFor('file_changed'), { assetId, step: `part ${failure.n}`, cleanup });
+      return toolError('file_changed', failure.err.message, hint('file_changed'), { assetId, step: `part ${failure.n}`, cleanup });
     }
     return fail(failure.err, 'upload_failed', { step: `part ${failure.n}`, cleanup });
   }
@@ -976,7 +980,7 @@ async function runUpload({
   }
   if (changed) {
     const cleanup = await abortMultipart();
-    return toolError('file_changed', 'The file changed during the upload.', hintFor('file_changed'), { assetId, step: 'complete', cleanup });
+    return toolError('file_changed', 'The file changed during the upload.', hint('file_changed'), { assetId, step: 'complete', cleanup });
   }
 
   if (signal?.aborted) {
@@ -1002,7 +1006,7 @@ async function runUpload({
     return toolError(
       'upload_unknown',
       err instanceof CancelledError ? 'Cancelled while the upload was being finished.' : `multipart-complete: ${err?.message || err}`,
-      hintFor('upload_unknown', { webUrl: webUrlOf() }),
+      hint('upload_unknown', { webUrl: webUrlOf() }),
       { assetId, webUrl: webUrlOf(), step: 'complete' },
     );
   }
@@ -1021,7 +1025,7 @@ async function runUpload({
   const outcomeUnknown = (err) => toolError(
     'outcome_unknown',
     err instanceof CancelledError ? 'Cancelled after the transcription request was sent.' : `/v1/file/jobs: ${err?.message || err}`,
-    hintFor('outcome_unknown'),
+    hint('outcome_unknown'),
     { assetId, webUrl },
   );
   const postJob = async () => {

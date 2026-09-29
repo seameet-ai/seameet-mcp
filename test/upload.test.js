@@ -496,7 +496,8 @@ async function main() {
     const down = await run(small, { routes: { 'POST /v1/file/jobs': () => json(503, { error: 'auth_unavailable' }) } });
     assert.ok(down.result.error.hint.includes(`https://web.test/r/${ASSET_ID}`), 'a 503 names where the saved file is');
     const fe = await run(small, { routes: { 'POST /v1/file/jobs': () => json(403, { error: 'free_exhausted' }) } });
-    assert.strictEqual(fe.result.error.hint, `Your free transcription hours are used up; upgrade at app.seameet.ai, then open https://web.test/r/${ASSET_ID} to transcribe this file.`);
+    // The hint names the configured web app (SEAMEET_WEB_URL), not the PROD host.
+    assert.strictEqual(fe.result.error.hint, `Your free transcription hours are used up; upgrade at web.test, then open https://web.test/r/${ASSET_ID} to transcribe this file.`);
   });
   await test('413 from sync-api → too_large (storage quota gets its own sentence)', async () => {
     const size = await run(small, { routes: { 'op:multipart-create': () => json(413, { error: 'import_too_large' }) } });
@@ -890,6 +891,10 @@ async function main() {
     assert.ok(result.next.includes(`seameet_get_recording({assetId: "${ASSET_ID}"})`));
     assert.ok(result.next.includes('about 120 seconds'));
     assert.ok(result.next.includes('"done"') && result.next.includes('"failed"'));
+  });
+  await test('a short file is about 1 minute, never 0', async () => {
+    const { result } = await run(small, { parseStream: audioProbe(16) });
+    assert.strictEqual(result.estimatedMinutes, 1);
   });
   await test('webUrl defaults to app.seameet.ai', async () => {
     const env = { ...ENV };
