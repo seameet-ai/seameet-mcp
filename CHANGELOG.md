@@ -4,6 +4,29 @@ All notable changes to `@seameet/mcp`. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this package uses [SemVer](https://semver.org/)
 (pre-1.0, so minor versions may include small breaking changes — called out below).
 
+## [0.3.0] - 2026-09-29
+
+### Added
+- **`seameet_transcribe_file`: transcribe a file from your computer.** Ask
+  "Transcribe ~/Downloads/interview.m4a" and the agent uploads the file to your
+  SeaMeet library and starts a speaker-labeled transcription, the same way
+  app.seameet.ai/transcribe does. It returns right away with the recording's
+  `assetId`, a link to it on app.seameet.ai, and when to check back with
+  `seameet_get_recording`. Works with mp3, m4a, mp4, mov, wav, flac, ogg, oga,
+  opus, webm, aac, amr and spx files up to 512 MB and 5 hours, uses your
+  transcription allowance, and needs a read+write key (the one cloud
+  authorization mints). Before uploading it checks your remaining allowance and
+  daily upload limit, so a file that can't be transcribed isn't uploaded.
+- Upload progress is reported after each 8 MB part, so hosts that extend their
+  timeout on progress don't cut off a big upload.
+- New config: `SEAMEET_SUPABASE_URL`, `SEAMEET_SUPABASE_ANON_KEY`,
+  `SEAMEET_STT_PROXY_URL`, `SEAMEET_WEB_URL`.
+
+### Changed
+- New dependency: `music-metadata`, used to read a file's length and whether it
+  has a picture before uploading.
+- The server now reports its real package version in the MCP handshake.
+
 ## [0.2.3] - 2026-07-14
 
 ### Changed

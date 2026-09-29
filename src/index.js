@@ -30,12 +30,18 @@
  *   SEAMEET_REMOTE_URL — remote MCP worker /mcp endpoint (default: PROD)
  *   SEAMEET_DEVICE_URL — mcp-device edge function (default: PROD)
  *   SEAMEET_CLOUD_CREDENTIALS_FILE — where the minted key is cached
+ *   SEAMEET_SUPABASE_URL / SEAMEET_SUPABASE_ANON_KEY / SEAMEET_STT_PROXY_URL /
+ *   SEAMEET_WEB_URL — endpoints for seameet_transcribe_file (src/upload.js)
  */
 
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+
+import { TRANSCRIBE_TOOL, transcribeFile } from './upload.js';
+
+export { TRANSCRIBE_TOOL };
 
 export const MAX_TOOL_OUTPUT_CHARS = 80000;
 const REQUEST_TIMEOUT_MS = 65000; // slightly above the app's own 60 s ceiling
@@ -61,6 +67,16 @@ const INSTALL_HINT =
 
 const DEFAULT_REMOTE_URL = 'https://seameet-mcp-remote.seameet.workers.dev/mcp';
 const DEFAULT_DEVICE_URL = 'https://tvezjojyndcgkneyxook.supabase.co/functions/v1/mcp-device';
+
+// Reported in the MCP initialize handshake; read from package.json (shipped in
+// both the npm package and the .mcpb bundle) so it can't drift.
+export const PACKAGE_VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Desktop-bridge credentials discovery
@@ -543,6 +559,7 @@ export const SERVER_INSTRUCTIONS = [
   'Use seameet_status first when you need to know whether desktop recording tools or cloud library tools are available.',
   'Desktop mode works when the SeaMeet desktop app is running and provides local recording, screenshots, live transcript, and artifact tools.',
   'Cloud mode reads synced recordings, transcripts, summaries, share links, usage, API keys, and webhooks after the user authorizes in the SeaMeet web app.',
+  'To transcribe a local audio or video file, call seameet_transcribe_file with its path, then poll seameet_get_recording(assetId) as its result says.',
   'Prefer read-only listing and artifact tools before write or recording tools. Ask the user before starting/stopping recordings, taking screenshots, renaming files, or saving generated artifacts.',
 ].join(' ');
 
@@ -605,7 +622,7 @@ export async function createServer(env = process.env) {
   } = await loadSdk();
 
   const server = new Server(
-    { name: 'seameet', version: '0.2.1' },
+    { name: 'seameet', version: PACKAGE_VERSION },
     {
       capabilities: {
         prompts: { listChanged: false },
@@ -675,10 +692,11 @@ export async function createServer(env = process.env) {
 
     if (!seen.has(STATUS_TOOL.name)) tools.push(STATUS_TOOL);
     if (!seen.has(LOGOUT_TOOL.name)) tools.push(LOGOUT_TOOL);
+    if (!seen.has(TRANSCRIBE_TOOL.name)) tools.push(TRANSCRIBE_TOOL);
     return { tools };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     const respond = (payload, isError) => ({
       content: [{ type: 'text', text: toText(payload) }],
@@ -714,6 +732,48 @@ export async function createServer(env = process.env) {
           ? 'Forgot the cached SeaMeet cloud key. The next cloud tool call will re-authorize. The key stays valid until you revoke it at https://app.seameet.ai/account.'
           : 'No cached cloud key to forget.',
       });
+    }
+
+    // Transcribe a local file: runs in this process (the hosted worker can't
+    // read the user's disk), authorized with the same cloud key.
+    if (name === TRANSCRIBE_TOOL.name) {
+      let auth;
+      try {
+        auth = await ensureCloudAuth(env, name);
+      } catch (err) {
+        return respond({
+          success: false,
+          error: {
+            code: 'cloud_error',
+            message: err.message,
+            tool: name,
+            hint: 'SeaMeet cloud authorization could not start; check the network connection and try again.',
+          },
+        }, true);
+      }
+      if (auth.challenge) return respond(auth.challenge, true);
+      const progressToken = request.params._meta?.progressToken;
+      const payload = await transcribeFile({
+        env,
+        key: auth.key,
+        args,
+        onProgress: progressToken !== undefined && typeof extra?.sendNotification === 'function'
+          ? (progress, total) => extra.sendNotification({
+            method: 'notifications/progress',
+            params: { progressToken, progress, total, message: `Uploaded part ${progress} of ${total}` },
+          })
+          : undefined,
+        onUnauthorized: () => {
+          // Same as the cloud path's revoked-key handling. An env key can't be
+          // deleted — the hint tells the user to replace it instead.
+          const envKey = typeof env.SEAMEET_API_KEY === 'string' && env.SEAMEET_API_KEY.startsWith('smk_');
+          if (!envKey) {
+            try { fs.rmSync(cloudCredentialPath(env)); } catch { /* ignore */ }
+          }
+          pendingDevice = null;
+        },
+      });
+      return respond(payload, payload.success !== true);
     }
 
     // If the agent calls a tool before listing (cloudToolNames not yet

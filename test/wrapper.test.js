@@ -302,9 +302,9 @@ async function run() {
   let c3;
   try {
     c3 = await connectClient({ ...unreachableCloud, SEAMEET_MCP_CREDENTIALS_FILE: noDesktop, SEAMEET_CLOUD_CREDENTIALS_FILE: path.join(tmpDir, 'nokey.json') });
-    await test('tools/list → just the local tools (status + logout)', async () => {
+    await test('tools/list → just the local tools (status + logout + transcribe_file)', async () => {
       const names = (await c3.listTools()).tools.map((t) => t.name);
-      assert.deepStrictEqual(names, ['seameet_status', 'seameet_logout']);
+      assert.deepStrictEqual(names, ['seameet_status', 'seameet_logout', 'seameet_transcribe_file']);
     });
   } finally {
     if (c3) await c3.close();
