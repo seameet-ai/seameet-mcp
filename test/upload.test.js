@@ -802,7 +802,9 @@ async function main() {
   await test('the path swapped for another file mid-upload → file_changed', async () => {
     const file = tmpFile('swap.wav', 3 * MiB);
     const other = tmpFile('other.wav', 3 * MiB);
-    const { result } = await run(file, { beforeComplete: async () => { fs.renameSync(other, file); } });
+    // Delete, then rename into the vacant path: Windows refuses a rename over
+    // a file that is open, but lets it be deleted (libuv opens with share-delete).
+    const { result } = await run(file, { beforeComplete: async () => { fs.rmSync(file); fs.renameSync(other, file); } });
     assert.strictEqual(result.error.code, 'file_changed');
   });
   await test('every part is read from the fd opened before the first request', async () => {
