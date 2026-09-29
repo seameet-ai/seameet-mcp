@@ -53,7 +53,15 @@ export const PART_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 4000]); // 3 retr
 export const PROBE_TIMEOUT_MS = 10000;
 export const BUDGET_TIMEOUT_MS = 10000;
 export const API_TIMEOUT_MS = 30000;
-export const PART_PUT_TIMEOUT_MS = 120000;
+// Per-part PUT timeout. An inactivity timeout would be ideal, but a Buffer
+// body gives no upload-progress events in fetch, so the simpler robust choice
+// is a fixed budget scaled by concurrency: MAX_PARTS_IN_FLIGHT parts share the
+// uplink, so each one gets roughly 1/3 of it. 120 s for one 8 MiB part alone
+// (~70 KB/s minimum) × 3 keeps that same minimum link speed when 3 run at once.
+export const PART_PUT_BASE_TIMEOUT_MS = 120000;
+export const PART_PUT_TIMEOUT_MS = PART_PUT_BASE_TIMEOUT_MS * MAX_PARTS_IN_FLIGHT; // 360 s
+// A 409 not_synced at job start means R2/the row hadn't settled yet; retry once.
+export const JOB_RETRY_DELAY_MS = 2000;
 
 export const TITLE_MAX_CODE_POINTS = 120;
 export const MAX_HOTWORDS = 100;
@@ -147,7 +155,7 @@ export function hintFor(code, ctx = {}) {
     case 'session_too_long':
       return 'This recording is longer than 5 hours, the most SeaMeet transcribes in one file; split it and try again.';
     case 'upload_incomplete':
-      return "SeaMeet hadn't finished receiving the upload yet; call this tool again to retry.";
+      return `SeaMeet was still finishing the upload, so transcription did not start; open ${ctx.webUrl} in a minute to start transcription there.`;
     case 'too_large':
       return ctx.quota
         ? 'Your SeaMeet cloud storage is full; free up space or upgrade at app.seameet.ai, then try again.'
@@ -165,7 +173,11 @@ export function hintFor(code, ctx = {}) {
         ? `SeaMeet is briefly unavailable; the file is saved at ${ctx.webUrl}, so try this tool again in a minute or start transcription there.`
         : 'SeaMeet is briefly unavailable; call this tool again in a minute.';
     case 'job_start_failed':
-      return `The file is in your SeaMeet library at ${ctx.webUrl} but transcription did not start; open it there to retry transcription.`;
+      return `The file is in your SeaMeet library but transcription could not start; open ${ctx.webUrl} to start it there.`;
+    case 'cancelled':
+      return ctx.assetId
+        ? 'The upload was cancelled and nothing was transcribed; the partial upload was aborted, though an empty entry may remain in your SeaMeet library.'
+        : 'The upload was cancelled before anything was sent.';
     default:
       return 'Something went wrong talking to SeaMeet; try again in a minute.';
   }
@@ -301,11 +313,61 @@ function validateOptions(args) {
 // HTTP
 // ---------------------------------------------------------------------------
 
-async function httpJson(fetchImpl, url, init, timeoutMs) {
+export class CancelledError extends Error {
+  constructor() {
+    super('Cancelled by the client.');
+    this.name = 'CancelledError';
+  }
+}
+
+/**
+ * One signal that aborts when any input does. AbortSignal.any needs Node
+ * 20.3 / 18.17; package.json allows Node >= 18.0, so fall back to wiring it
+ * by hand. The returned dispose() detaches the listeners.
+ */
+export function anySignal(signals) {
+  const list = signals.filter(Boolean);
+  if (typeof AbortSignal.any === 'function') return { signal: AbortSignal.any(list), dispose: () => {} };
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  for (const s of list) {
+    if (s.aborted) { controller.abort(); break; }
+    s.addEventListener('abort', onAbort, { once: true });
+  }
+  return { signal: controller.signal, dispose: () => list.forEach((s) => s.removeEventListener('abort', onAbort)) };
+}
+
+/** Run fetch with a timeout, also aborted by the caller's `signal` (→ CancelledError). */
+async function fetchWithSignal(fetchImpl, url, init, timeoutMs, signal) {
+  if (signal?.aborted) throw new CancelledError();
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const combined = anySignal([timeout.signal, signal]);
+  try {
+    return await fetchImpl(url, { ...init, signal: combined.signal });
+  } catch (err) {
+    if (signal?.aborted) throw new CancelledError();
+    if (timeout.signal.aborted) throw Object.assign(new Error(`timed out after ${timeoutMs} ms`), { code: 'ETIMEDOUT' });
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    combined.dispose();
+  }
+}
+
+async function httpJson(fetchImpl, url, init, timeoutMs, signal) {
+  if (signal?.aborted) throw new CancelledError();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const combined = anySignal([controller.signal, signal]);
   try {
-    const res = await fetchImpl(url, { ...init, signal: controller.signal });
+    let res;
+    try {
+      res = await fetchImpl(url, { ...init, signal: combined.signal });
+    } catch (err) {
+      if (signal?.aborted) throw new CancelledError();
+      throw err;
+    }
     let body = null;
     try {
       const text = await res.text();
@@ -313,9 +375,11 @@ async function httpJson(fetchImpl, url, init, timeoutMs) {
     } catch {
       body = null;
     }
+    if (signal?.aborted) throw new CancelledError();
     return { status: res.status, body };
   } finally {
     clearTimeout(timer);
+    combined.dispose();
   }
 }
 
@@ -328,8 +392,10 @@ class HttpFailure extends Error {
   }
 }
 
-function makeClients(cfg, key, fetchImpl) {
-  async function syncApi(op, args = {}) {
+function makeClients(cfg, key, fetchImpl, defaultSignal) {
+  // `signal` defaults to the caller's cancellation signal; pass null for
+  // cleanup calls (multipart-abort) that must still go out after a cancel.
+  async function syncApi(op, args = {}, signal = defaultSignal) {
     let r;
     try {
       r = await httpJson(fetchImpl, `${cfg.supabaseUrl}/functions/v1/sync-api`, {
@@ -341,8 +407,9 @@ function makeClients(cfg, key, fetchImpl) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ ...args, op }),
-      }, API_TIMEOUT_MS);
+      }, API_TIMEOUT_MS, signal);
     } catch (err) {
+      if (err instanceof CancelledError) throw err;
       throw Object.assign(new Error(`sync-api ${op}: ${err?.message || err}`), { network: true });
     }
     if (r.status < 200 || r.status >= 300) throw new HttpFailure(r.status, r.body, 'sync-api');
@@ -356,8 +423,9 @@ function makeClients(cfg, key, fetchImpl) {
         method,
         headers: { 'X-Api-Key': key, ...(body ? { 'Content-Type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
-      }, timeoutMs);
+      }, timeoutMs, defaultSignal);
     } catch (err) {
+      if (err instanceof CancelledError) throw err;
       throw Object.assign(new Error(`stt-proxy ${route}: ${err?.message || err}`), { network: true });
     }
     if (r.status < 200 || r.status >= 300) throw new HttpFailure(r.status, r.body, 'stt-proxy');
@@ -378,7 +446,11 @@ const PASS_THROUGH_STT_CODES = new Set([
 export function mapHttpFailure(err) {
   if (!(err instanceof HttpFailure)) return null;
   const code = err.body?.error;
-  if (err.status === 401) return { code: 'auth_required', auth: true };
+  // Only sync-api's 401 means the key itself is bad. stt-proxy is always
+  // called after sync-api has accepted the same key in this call, so its 401
+  // (e.g. a proxy that predates API-key auth) must never delete the key.
+  if (err.status === 401 && err.source === 'sync-api') return { code: 'auth_required', auth: true };
+  if (err.status === 401) return { code: 'job_start_failed', sttUnauthorized: true };
   if (err.status === 403 && code === 'insufficient_scope') return { code: 'insufficient_scope' };
   if (err.source === 'stt-proxy') {
     if (PASS_THROUGH_STT_CODES.has(code) && [403, 413, 429].includes(err.status)) return { code };
@@ -407,6 +479,7 @@ export function mapHttpFailure(err) {
  * @param {()=>void} [o.onUnauthorized]      a 401: drop the cached key
  * @param {Function} [o.parseFile]           music-metadata parseFile override
  * @param {()=>string} [o.randomUUID]
+ * @param {AbortSignal} [o.signal]           MCP request cancellation
  */
 export async function transcribeFile({
   env = process.env,
@@ -419,6 +492,9 @@ export async function transcribeFile({
   parseFile,
   randomUUID = nodeRandomUUID,
   probeTimeoutMs = PROBE_TIMEOUT_MS,
+  partTimeoutMs = PART_PUT_TIMEOUT_MS,
+  jobRetryDelayMs = JOB_RETRY_DELAY_MS,
+  signal,
 } = {}) {
   const cfg = uploadConfig(env);
   const envKey = envKeyInUse(env);
@@ -433,23 +509,44 @@ export async function transcribeFile({
   const { estimatedDurationMs, hasVideo } = await probeMedia(file.filePath, file.ext, { parseFile, timeoutMs: probeTimeoutMs });
   const estimatedMinutes = estimatedDurationMs !== undefined ? Math.round(estimatedDurationMs / 60000) : null;
 
-  const { syncApi, stt } = makeClients(cfg, key, fetchImpl);
+  const { syncApi, stt } = makeClients(cfg, key, fetchImpl, signal);
+  // Backoff sleeps end early on cancel so a cancelled call returns promptly.
+  const pause = (ms) => new Promise((resolve) => {
+    if (!signal) { Promise.resolve(sleep(ms)).then(resolve, resolve); return; }
+    if (signal.aborted) { resolve(); return; }
+    const onAbort = () => resolve();
+    signal.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve(sleep(ms)).then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, resolve);
+  });
   let assetId;
+  let uploadComplete = false; // webUrl only means something once the bytes are in
+
+  const cancelled = (step) => toolError(
+    'cancelled',
+    'The request was cancelled.',
+    hintFor('cancelled', { assetId }),
+    { ...(step ? { step } : {}), ...(assetId ? { assetId } : {}) },
+  );
 
   const fail = (err, fallbackCode, extras = {}) => {
+    if (err instanceof CancelledError || signal?.aborted) return cancelled(extras.step);
     const mapped = mapHttpFailure(err);
+    const webUrl = uploadComplete ? `${cfg.webUrl}/r/${assetId}` : undefined;
     const ctxExtras = { ...(assetId ? { assetId } : {}), ...extras };
     if (mapped?.auth) {
       try { onUnauthorized?.(); } catch { /* best-effort */ }
-      return toolError('auth_required', 'Your SeaMeet cloud key was rejected.', hintFor('auth_required', { envKey }), { assetId: ctxExtras.assetId });
+      return toolError('auth_required', 'Your SeaMeet cloud key was rejected.', hintFor('auth_required', { envKey }), ctxExtras);
     }
     if (mapped) {
-      return toolError(mapped.code, err.message, hintFor(mapped.code, { envKey, quota: mapped.quota, webUrl: assetId && `${cfg.webUrl}/r/${assetId}` }), { assetId: ctxExtras.assetId });
+      const message = mapped.sttUnauthorized
+        ? 'The transcription service did not accept this key (it may not support API keys yet).'
+        : err.message;
+      return toolError(mapped.code, message, hintFor(mapped.code, { envKey, quota: mapped.quota, webUrl }), ctxExtras);
     }
     return toolError(
       fallbackCode,
       err?.message || String(err),
-      hintFor(fallbackCode, { step: extras.step, webUrl: assetId && `${cfg.webUrl}/r/${assetId}` }),
+      hintFor(fallbackCode, { step: extras.step, webUrl }),
       ctxExtras,
     );
   };
@@ -457,11 +554,13 @@ export async function transcribeFile({
   // 3. Budget pre-check — advisory; any failure (including a 401 from a
   //    proxy that predates key auth) is ignored and sync-api decides.
   let budget = null;
+  if (signal?.aborted) return cancelled();
   try {
     budget = await stt('GET', '/v1/file/budget', null, BUDGET_TIMEOUT_MS);
   } catch {
     budget = null;
   }
+  if (signal?.aborted) return cancelled();
   if (budget && typeof budget === 'object') {
     if (budget.dailyRemaining === 0) {
       return toolError('daily_import_limit', 'The daily upload limit is reached.', hintFor('daily_import_limit'));
@@ -510,8 +609,9 @@ export async function transcribeFile({
   }
 
   const total = partCount(file.sizeBytes);
+  // Deliberately not tied to the cancellation signal: it must go out after a cancel.
   const abort = async () => {
-    try { await syncApi('multipart-abort', { assetId, uploadId }); } catch { /* best-effort */ }
+    try { await syncApi('multipart-abort', { assetId, uploadId }, null); } catch { /* best-effort */ }
   };
 
   let fh;
@@ -543,30 +643,24 @@ export async function transcribeFile({
   const putPart = async (n, buf) => {
     let lastErr;
     for (let attempt = 0; attempt <= PART_RETRY_DELAYS_MS.length; attempt++) {
-      if (attempt > 0) await sleep(PART_RETRY_DELAYS_MS[attempt - 1]);
+      if (attempt > 0) await pause(PART_RETRY_DELAYS_MS[attempt - 1]);
+      if (signal?.aborted) throw new CancelledError();
       if (failure) throw failure.err; // another part already failed — stop early
       try {
         const signed = await syncApi('multipart-sign', { assetId, uploadId, partNumber: n });
         if (!signed.url) throw new Error('multipart-sign returned no url');
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), PART_PUT_TIMEOUT_MS);
-        let res;
-        try {
-          res = await fetchImpl(signed.url, {
-            method: 'PUT',
-            headers: { 'Content-Length': String(buf.length) },
-            body: buf,
-            signal: controller.signal,
-          });
-          try { await res.arrayBuffer?.(); } catch { /* drain */ }
-        } finally {
-          clearTimeout(timer);
-        }
+        const res = await fetchWithSignal(fetchImpl, signed.url, {
+          method: 'PUT',
+          headers: { 'Content-Length': String(buf.length) },
+          body: buf,
+        }, partTimeoutMs, signal);
+        try { await res.arrayBuffer?.(); } catch { /* drain */ }
         if (!res.ok) throw new Error(`part ${n} HTTP ${res.status}`);
         const etag = (res.headers?.get?.('etag') ?? '').replace(/"/g, '');
         if (!etag) throw new Error(`part ${n} missing etag`);
         return etag;
       } catch (err) {
+        if (err instanceof CancelledError || signal?.aborted) throw new CancelledError();
         // A rejected key or scope won't get better by retrying.
         if (err instanceof HttpFailure && (err.status === 401 || err.status === 403)) throw err;
         lastErr = err;
@@ -578,6 +672,10 @@ export async function transcribeFile({
   const worker = async () => {
     while (!failure && nextPart <= total) {
       const n = nextPart++;
+      if (signal?.aborted) {
+        if (!failure) failure = { n, err: new CancelledError() };
+        return;
+      }
       try {
         const buf = await readPart(n);
         etags[n - 1] = await putPart(n, buf);
@@ -600,6 +698,10 @@ export async function transcribeFile({
     return fail(failure.err, 'upload_failed', { step: `part ${failure.n}` });
   }
 
+  if (signal?.aborted) {
+    await abort();
+    return cancelled('complete');
+  }
   try {
     await syncApi('multipart-complete', {
       assetId,
@@ -610,21 +712,33 @@ export async function transcribeFile({
     await abort();
     return fail(err, 'upload_failed', { step: 'complete' });
   }
+  uploadComplete = true;
 
   // 6. Start the job. A failure here leaves the asset in the library,
   //    untranscribed (as on the web) — the error carries assetId.
   const webUrl = `${cfg.webUrl}/r/${assetId}`;
+  const jobBody = {
+    assetId,
+    ...(opts.language ? { language: opts.language } : {}),
+    ...(estimatedDurationMs !== undefined ? { estimatedDurationMs } : {}),
+    ...(opts.hotwords ? { options: { hotwords: opts.hotwords } } : {}),
+  };
   let job;
   try {
-    job = await stt('POST', '/v1/file/jobs', {
-      assetId,
-      ...(opts.language ? { language: opts.language } : {}),
-      ...(estimatedDurationMs !== undefined ? { estimatedDurationMs } : {}),
-      ...(opts.hotwords ? { options: { hotwords: opts.hotwords } } : {}),
-    });
+    if (signal?.aborted) throw new CancelledError();
+    try {
+      job = await stt('POST', '/v1/file/jobs', jobBody);
+    } catch (err) {
+      // 409 not_synced: the completed object hadn't settled yet. Retry once;
+      // re-running the whole tool would upload a duplicate.
+      if (mapHttpFailure(err)?.code !== 'upload_incomplete') throw err;
+      await pause(jobRetryDelayMs);
+      if (signal?.aborted) throw new CancelledError();
+      job = await stt('POST', '/v1/file/jobs', jobBody);
+    }
   } catch (err) {
     const payload = fail(err, 'job_start_failed');
-    payload.error.webUrl = webUrl;
+    if (payload.error.code !== 'cancelled') payload.error.webUrl = webUrl;
     return payload;
   }
 

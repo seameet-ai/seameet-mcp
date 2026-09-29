@@ -12,6 +12,14 @@ Supabase project and the `/link` page live on `app.seameet.ai` — or a real use
 (`npx @seameet/mcp` → authorize) fails against endpoints that don't exist yet. Desktop mode is
 unaffected (localhost-only). Tracking: seasalt-ai/seameet-app-desktop#461.
 
+## ⚠️ Before the `0.3.0` publish
+
+`0.3.0` adds `seameet_transcribe_file`, which starts transcription jobs on stt-proxy with the user's
+API key. Do **not** tag `v0.3.0` until stt-proxy API-key auth on `/v1/file/jobs` and
+`/v1/file/budget` (seasalt-ai/seameet-app-desktop#845) is deployed to PROD. Against an older
+stt-proxy, every upload succeeds but the job start is refused, so the file lands in the library
+untranscribed (`job_start_failed`). Check with a small file against PROD before tagging.
+
 ## 1. npm release (automated)
 
 1. Bump `package.json` version (SemVer; pre-1.0, so minor may carry small breaking changes — note them in `CHANGELOG.md`).

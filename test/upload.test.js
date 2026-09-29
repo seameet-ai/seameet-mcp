@@ -25,7 +25,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import {
   ALLOWED_EXTENSIONS, DEFAULT_SUPABASE_URL, DEFAULT_STT_PROXY_URL, DEFAULT_WEB_URL, DEFAULT_SUPABASE_ANON_KEY,
-  MAX_FILE_BYTES, PART_BYTES, TRANSCRIBE_TOOL, checkFile, cutCodePoints, partCount, pollAfterSeconds,
+  MAX_FILE_BYTES, MAX_PARTS_IN_FLIGHT, PART_BYTES, PART_PUT_BASE_TIMEOUT_MS, PART_PUT_TIMEOUT_MS, TRANSCRIBE_TOOL, anySignal, checkFile, cutCodePoints, partCount, pollAfterSeconds,
   transcribeFile, uploadConfig,
 } from '../src/upload.js';
 
@@ -116,7 +116,7 @@ function mockFetch(routes = {}) {
       state.inflight++;
       state.maxInflight = Math.max(state.maxInflight, state.inflight);
       try {
-        if (routes.PUT) return await routes.PUT({ partNumber, attempt: state.putAttempts[partNumber], state });
+        if (routes.PUT) return await routes.PUT({ partNumber, attempt: state.putAttempts[partNumber], state, signal: init.signal });
         return new Response(null, { status: 200, headers: { etag: `"etag-${partNumber}"` } });
       } finally {
         state.inflight--;
@@ -130,12 +130,12 @@ function mockFetch(routes = {}) {
 const audioProbe = (duration = 600) => async () => ({ format: { duration, hasVideo: false } });
 const noSleep = () => { const sleeps = []; return { sleeps, sleep: async (ms) => { sleeps.push(ms); } }; };
 
-async function run(file, { routes, args = {}, env = ENV, parseFile = audioProbe(), onProgress, onUnauthorized, probeTimeoutMs } = {}) {
+async function run(file, { routes, args = {}, env = ENV, parseFile = audioProbe(), onProgress, onUnauthorized, probeTimeoutMs, signal, partTimeoutMs } = {}) {
   const m = mockFetch(routes);
   const s = noSleep();
   const result = await transcribeFile({
     env, key: KEY, args: { path: file, ...args }, fetchImpl: m.fetchImpl, sleep: s.sleep,
-    parseFile, onProgress, onUnauthorized, probeTimeoutMs,
+    parseFile, onProgress, onUnauthorized, probeTimeoutMs, signal, partTimeoutMs,
   });
   return { result, ...m, sleeps: s.sleeps };
 }
@@ -404,10 +404,29 @@ async function main() {
     assert.ok(result.error.hint.includes('call this tool again'));
   });
   await test('401 with SEAMEET_API_KEY set → hint says to replace that key', async () => {
-    const { result } = await run(small, { env: { ...ENV, SEAMEET_API_KEY: KEY }, routes: { 'POST /v1/file/jobs': () => json(401, { error: 'unauthorized' }) } });
+    let dropped = 0;
+    const { result } = await run(small, {
+      env: { ...ENV, SEAMEET_API_KEY: KEY },
+      routes: { 'op:multipart-create': () => json(401, { error: 'unauthorized' }) },
+      onUnauthorized: () => { dropped++; },
+    });
     assert.strictEqual(result.error.code, 'auth_required');
     assert.ok(result.error.hint.includes('SEAMEET_API_KEY'));
     assert.strictEqual(result.assetId, ASSET_ID);
+    assert.strictEqual(dropped, 1, 'index.js decides not to delete an env key; upload.js still reports the 401');
+  });
+  await test('401 from stt-proxy after sync-api accepted the key → job_start_failed, key NOT dropped', async () => {
+    let dropped = 0;
+    const { result, calls } = await run(small, {
+      routes: { 'POST /v1/file/jobs': () => json(401, { error: 'unauthorized' }) },
+      onUnauthorized: () => { dropped++; },
+    });
+    assert.strictEqual(result.error.code, 'job_start_failed');
+    assert.strictEqual(dropped, 0, 'a stt-proxy 401 must never delete a key sync-api just accepted');
+    assert.strictEqual(result.assetId, ASSET_ID);
+    assert.strictEqual(result.error.webUrl, `https://web.test/r/${ASSET_ID}`);
+    assert.ok(result.error.hint.includes(`open https://web.test/r/${ASSET_ID}`), result.error.hint);
+    assert.ok(syncOps(calls).includes('multipart-complete'));
   });
   await test('403 insufficient_scope from upsert-asset → insufficient_scope, nothing created', async () => {
     const { result, calls } = await run(small, { routes: { 'op:upsert-asset': () => json(403, { error: 'insufficient_scope' }) } });
@@ -452,6 +471,137 @@ async function main() {
     const quota = await run(small, { routes: { 'op:multipart-create': () => json(413, { error: 'quota_exceeded' }) } });
     assert.strictEqual(quota.result.error.code, 'too_large');
     assert.ok(quota.result.error.hint.includes('storage'));
+  });
+
+  console.log('\n503 / not_synced / timeouts:');
+  await test('503 during upload steps keeps step and never claims the file is saved', async () => {
+    const cases = [
+      ['create', { 'op:multipart-create': () => json(503, { error: 'auth_unavailable' }) }],
+      ['part 1', { 'op:multipart-sign': () => json(503, { error: 'auth_unavailable' }) }],
+      ['complete', { 'op:multipart-complete': () => json(503, { error: 'auth_unavailable' }) }],
+    ];
+    for (const [step, routes] of cases) {
+      const { result, calls } = await run(small, { routes });
+      assert.strictEqual(result.error.code, 'service_unavailable', step);
+      assert.strictEqual(result.error.step, step);
+      assert.ok(!('webUrl' in result.error), step);
+      assert.ok(!/saved|web\.test/.test(result.error.hint), `${step}: ${result.error.hint}`);
+      // create never opened an upload, so there is nothing to abort.
+      assert.strictEqual(syncOps(calls).includes('multipart-abort'), step !== 'create', `${step} abort`);
+      assert.ok(!calls.some((c) => c.route === 'POST /v1/file/jobs'));
+    }
+  });
+  await test('503 at job start (after the upload completed) points at webUrl', async () => {
+    const { result } = await run(small, { routes: { 'POST /v1/file/jobs': () => json(503, { error: 'budget_unavailable' }) } });
+    assert.strictEqual(result.error.code, 'service_unavailable');
+    assert.strictEqual(result.error.webUrl, `https://web.test/r/${ASSET_ID}`);
+    assert.ok(result.error.hint.includes(`https://web.test/r/${ASSET_ID}`), result.error.hint);
+    assert.ok(!('step' in result.error));
+  });
+  await test('409 not_synced at job start is retried once after 2 s and then succeeds', async () => {
+    let n = 0;
+    const { result, sleeps, calls } = await run(small, {
+      routes: { 'POST /v1/file/jobs': () => (++n === 1 ? json(409, { error: 'not_synced' }) : json(202, { jobId: 'job-2', state: 'queued' })) },
+    });
+    assert.strictEqual(result.success, true, JSON.stringify(result));
+    assert.strictEqual(result.jobId, 'job-2');
+    assert.deepStrictEqual(sleeps, [2000]);
+    assert.strictEqual(calls.filter((c) => c.route === 'POST /v1/file/jobs').length, 2);
+    assert.strictEqual(syncOps(calls).filter((o) => o === 'upsert-asset').length, 1, 'no second upload');
+  });
+  await test('409 not_synced twice → upload_incomplete pointing at the existing asset, not a re-run', async () => {
+    const { result, calls } = await run(small, { routes: { 'POST /v1/file/jobs': () => json(409, { error: 'not_synced' }) } });
+    assert.strictEqual(result.error.code, 'upload_incomplete');
+    assert.strictEqual(calls.filter((c) => c.route === 'POST /v1/file/jobs').length, 2);
+    assert.ok(result.error.hint.includes(`open https://web.test/r/${ASSET_ID}`), result.error.hint);
+    assert.ok(!/call this tool again|re-?run/i.test(result.error.hint), result.error.hint);
+  });
+  await test('per-part timeout is 120 s × parts in flight, and a hung PUT times out and is retried', async () => {
+    assert.strictEqual(PART_PUT_TIMEOUT_MS, PART_PUT_BASE_TIMEOUT_MS * MAX_PARTS_IN_FLIGHT);
+    assert.strictEqual(PART_PUT_TIMEOUT_MS, 360000);
+    const hang = ({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    const { result, state, sleeps } = await run(small, { partTimeoutMs: 20, routes: { PUT: hang } });
+    assert.strictEqual(result.error.code, 'upload_failed');
+    assert.strictEqual(result.error.step, 'part 1');
+    assert.ok(/timed out/.test(result.error.message), result.error.message);
+    assert.strictEqual(state.putAttempts[1], 4);
+    assert.deepStrictEqual(sleeps, [1000, 2000, 4000]);
+  });
+
+  console.log('\nCancellation:');
+  await test('anySignal aborts when any input aborts', async () => {
+    const a = new AbortController();
+    const b = new AbortController();
+    const { signal, dispose } = anySignal([a.signal, undefined, b.signal]);
+    assert.strictEqual(signal.aborted, false);
+    b.abort();
+    assert.strictEqual(signal.aborted, true);
+    dispose();
+    // Node 18.0–18.16 has no AbortSignal.any: exercise the hand-wired fallback.
+    const real = AbortSignal.any;
+    try {
+      AbortSignal.any = undefined;
+      const c = new AbortController();
+      const fb = anySignal([new AbortController().signal, c.signal]);
+      assert.strictEqual(fb.signal.aborted, false);
+      c.abort();
+      assert.strictEqual(fb.signal.aborted, true);
+      fb.dispose();
+      const pre = new AbortController();
+      pre.abort();
+      assert.strictEqual(anySignal([pre.signal]).signal.aborted, true);
+    } finally {
+      AbortSignal.any = real;
+    }
+  });
+  await test('cancel before starting → cancelled, no network call', async () => {
+    const c = new AbortController();
+    c.abort();
+    const { result, calls } = await run(small, { signal: c.signal });
+    assert.strictEqual(result.error.code, 'cancelled');
+    assert.strictEqual(calls.length, 0);
+  });
+  await test('cancel mid-upload → multipart-abort, no /v1/file/jobs, returns promptly', async () => {
+    const c = new AbortController();
+    const file = tmpFile('cancel.wav', 6 * PART_BYTES);
+    const started = Date.now();
+    const { result, calls } = await run(file, {
+      signal: c.signal,
+      routes: {
+        PUT: ({ partNumber, signal }) => {
+          if (partNumber === 2) setTimeout(() => c.abort(), 5);
+          // Honour the fetch signal like a real fetch would.
+          return new Promise((resolve, reject) => {
+            const t = setTimeout(() => resolve(new Response(null, { status: 200, headers: { etag: `"e${partNumber}"` } })), 50);
+            signal.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('aborted', 'AbortError')); });
+          });
+        },
+      },
+    });
+    assert.strictEqual(result.error.code, 'cancelled');
+    assert.strictEqual(result.assetId, ASSET_ID);
+    assert.ok(syncOps(calls).includes('multipart-abort'), 'multipart-abort called');
+    assert.ok(!syncOps(calls).includes('multipart-complete'));
+    assert.ok(!calls.some((c2) => c2.route === 'POST /v1/file/jobs'), 'job never started');
+    assert.ok(calls.filter((c2) => c2.kind === 'put').length < 6, 'stopped before sending every part');
+    assert.ok(Date.now() - started < 1000, 'returned promptly');
+  });
+  await test('cancel during the job-start retry wait → no second job POST', async () => {
+    const c = new AbortController();
+    const m = mockFetch({ 'POST /v1/file/jobs': () => json(409, { error: 'not_synced' }) });
+    const started = Date.now();
+    const pending = transcribeFile({
+      env: ENV, key: KEY, args: { path: small }, fetchImpl: m.fetchImpl, parseFile: audioProbe(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)), jobRetryDelayMs: 5000, signal: c.signal,
+    });
+    const poll = setInterval(() => {
+      if (m.calls.some((x) => x.route === 'POST /v1/file/jobs')) { clearInterval(poll); c.abort(); }
+    }, 2);
+    const result = await pending;
+    clearInterval(poll);
+    assert.strictEqual(result.error.code, 'cancelled');
+    assert.strictEqual(m.calls.filter((x) => x.route === 'POST /v1/file/jobs').length, 1);
+    assert.ok(Date.now() - started < 2000, 'the 5 s retry wait ended on cancel');
   });
 
   console.log('\nReturn shape:');
@@ -537,6 +687,33 @@ async function main() {
       assert.strictEqual(fake.state.lastSyncHeaders['x-api-key'], KEY);
       assert.strictEqual(fake.state.lastSyncHeaders.authorization, 'Bearer anon-int');
     });
+    await test('a stt-proxy 401 at job start keeps the cached key', async () => {
+      fake.state.sttReject = true;
+      const res = await client.callTool({ name: 'seameet_transcribe_file', arguments: { path: small } });
+      fake.state.sttReject = false;
+      const body = JSON.parse(res.content[0].text);
+      assert.strictEqual(body.error.code, 'job_start_failed');
+      assert.strictEqual(body.assetId, ASSET_ID);
+      assert.ok(fs.existsSync(credFile), 'cached key kept');
+    });
+    await test('cancelling the tool call aborts the multipart upload and never starts the job', async () => {
+      fake.state.hangPuts = true;
+      fake.state.ops = [];
+      const jobsBefore = fake.state.jobs;
+      const putsBefore = fake.state.puts;
+      const controller = new AbortController();
+      const call = client.callTool({ name: 'seameet_transcribe_file', arguments: { path: twenty } }, undefined, { signal: controller.signal });
+      const deadline = Date.now() + 5000;
+      while (fake.state.puts === putsBefore && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+      controller.abort();
+      await assert.rejects(call);
+      while (!fake.state.ops.includes('multipart-abort') && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+      fake.state.hangPuts = false;
+      assert.ok(fake.state.ops.includes('multipart-abort'), `ops: ${fake.state.ops.join(',')}`);
+      assert.ok(!fake.state.ops.includes('multipart-complete'));
+      await new Promise((r) => setTimeout(r, 100));
+      assert.strictEqual(fake.state.jobs, jobsBefore, 'no /v1/file/jobs after a cancel');
+    });
     await test('a revoked cached key → auth_required and the cached key file is deleted', async () => {
       fake.state.reject = true;
       const res = await client.callTool({ name: 'seameet_transcribe_file', arguments: { path: small } });
@@ -566,7 +743,7 @@ async function main() {
 }
 
 function startFakeBackend() {
-  const state = { reject: false, putLengths: [], putHadLength: [], lastSyncHeaders: null };
+  const state = { reject: false, sttReject: false, hangPuts: false, putLengths: [], putHadLength: [], lastSyncHeaders: null, ops: [], jobs: 0, puts: 0 };
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -581,6 +758,7 @@ function startFakeBackend() {
         state.lastSyncHeaders = req.headers;
         if (state.reject) return send(401, { error: 'unauthorized' });
         const body = JSON.parse(raw.toString('utf8'));
+        state.ops.push(body.op);
         if (body.op === 'upsert-asset') return send(200, { assetId: ASSET_ID });
         if (body.op === 'multipart-create') return send(200, { uploadId: 'up-int' });
         if (body.op === 'multipart-sign') return send(200, { url: `http://127.0.0.1:${port}/r2/${body.partNumber}` });
@@ -589,11 +767,15 @@ function startFakeBackend() {
         return send(400, { error: 'bad_request' });
       }
       if (req.url.startsWith('/r2/') && req.method === 'PUT') {
+        state.puts++;
+        if (state.hangPuts) return; // never answer — only a cancel ends it
         state.putLengths.push(raw.length);
         state.putHadLength.push(req.headers['content-length'] === String(raw.length) && !req.headers['transfer-encoding']);
         return send(200, null, { etag: `"int-${req.url.split('/').pop()}"` });
       }
       if (req.url === '/stt/v1/file/budget') return send(200, { availableMs: 3600000, dailyRemaining: null, queueRemaining: 5 });
+      if (req.url === '/stt/v1/file/jobs') state.jobs++;
+      if (req.url === '/stt/v1/file/jobs' && state.sttReject) return send(401, { error: 'unauthorized' });
       if (req.url === '/stt/v1/file/jobs') return send(202, { jobId: 'job-int', state: 'queued' });
       send(404, { error: 'nf' });
     });

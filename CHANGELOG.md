@@ -6,6 +6,11 @@ All notable changes to `@seameet/mcp`. Format based on
 
 ## [0.3.0] - 2026-09-29
 
+> **Release gate:** publish 0.3.0 only after stt-proxy API-key auth
+> (seasalt-ai/seameet-app-desktop#845) is deployed to PROD. Until then the
+> transcription service rejects keys at job start, so every upload would land
+> in the library untranscribed (the tool reports `job_start_failed`).
+
 ### Added
 - **`seameet_transcribe_file`: transcribe a file from your computer.** Ask
   "Transcribe ~/Downloads/interview.m4a" and the agent uploads the file to your
@@ -19,6 +24,8 @@ All notable changes to `@seameet/mcp`. Format based on
   daily upload limit, so a file that can't be transcribed isn't uploaded.
 - Upload progress is reported after each 8 MB part, so hosts that extend their
   timeout on progress don't cut off a big upload.
+- Cancelling the call from your agent stops the upload, cleans up the partial
+  upload and never starts a transcription.
 - New config: `SEAMEET_SUPABASE_URL`, `SEAMEET_SUPABASE_ANON_KEY`,
   `SEAMEET_STT_PROXY_URL`, `SEAMEET_WEB_URL`.
 

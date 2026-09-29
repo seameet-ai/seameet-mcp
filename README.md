@@ -174,8 +174,13 @@ Tool failures return structured JSON your agent can branch on:
 | `insufficient_scope` | The API key is read-only — authorize a read+write key |
 | `unsupported_type` / `too_large` / `empty_file` | `seameet_transcribe_file` refused the file before uploading anything |
 | `insufficient_allowance` / `free_exhausted` / `import_cap_reached` / `daily_import_limit` / `queue_full` / `session_too_long` | Not enough transcription allowance or room right now — the `hint` says what to tell the user |
-| `upload_failed` | The upload stopped; `step` says where (`create`, `part <n>`, `complete`) and the partial upload was cleaned up |
-| `job_start_failed` / `upload_incomplete` | The file is in the library (`assetId`, `webUrl`) but transcription did not start |
+| `not_entitled` | This account can't transcribe files — check the plan at app.seameet.ai |
+| `disabled` | Transcription is turned off for this account — contact support |
+| `upload_failed` | The upload stopped; `step` says where (`upsert-asset`, `create`, `part <n>`, `complete`) and the partial upload is aborted (the asset entry may remain in your library) |
+| `service_unavailable` | SeaMeet is briefly unavailable — retry in a minute. During the upload `step` says where it stopped; once the upload completed, the payload carries `webUrl` to start transcription there |
+| `job_start_failed` | The file is in the library (`assetId`, `webUrl`) but transcription could not start — open `webUrl` to start it; don't re-run the tool, which would upload a duplicate |
+| `upload_incomplete` | SeaMeet was still finishing the upload after one retry — open `webUrl` in a minute to start transcription |
+| `cancelled` | The host cancelled the call; the partial upload is aborted and no transcription starts |
 | `app_not_ready` | App is starting up — retry in a few seconds |
 | `invalid_request` | A required parameter is missing/invalid — re-check the tool schema |
 | `path_forbidden` | `filePath` must be inside the SeaMeet save directory |

@@ -757,6 +757,9 @@ export async function createServer(env = process.env) {
         env,
         key: auth.key,
         args,
+        // notifications/cancelled from the host aborts the upload: open
+        // multipart uploads are aborted and the job is never started.
+        signal: extra?.signal,
         onProgress: progressToken !== undefined && typeof extra?.sendNotification === 'function'
           ? (progress, total) => extra.sendNotification({
             method: 'notifications/progress',
