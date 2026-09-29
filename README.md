@@ -5,7 +5,7 @@ The [SeaMeet](https://seameet.ai) MCP server — let AI agents **record, transcr
 It picks the richest available backend automatically and exposes the union of both:
 
 - **Desktop mode** — when the SeaMeet desktop app is **running**, agents get the full recorder toolset (start/stop recordings, screenshots, live transcript, AI artifacts, search). No auth; nothing leaves your machine.
-- **Cloud mode** — when the app isn't there, agents read your **synced library** (recordings, transcripts, summaries) and manage webhooks over the network. Authorized by logging into the web app — **no key copy/paste**, works on a headless terminal.
+- **Cloud mode** — when the app isn't there, agents read your **synced library** (recordings, transcripts, summaries), **upload a local audio/video file to be transcribed**, and manage webhooks over the network. Authorized by logging into the web app — **no key copy/paste**, works on a headless terminal.
 
 `tools/list` returns the superset of whatever's available; call **`seameet_status`** any time to see the current mode(s).
 
@@ -26,6 +26,7 @@ It picks the richest available backend automatically and exposes the union of bo
 
 **☁️ Cloud library** *(cloud mode)*
 - List recent synced recordings, including files you transcribed on [app.seameet.ai](https://app.seameet.ai/transcribe) — `seameet_list_recent_recordings` · fetch the summary, the speaker-labeled transcript (paged for long recordings) and chapters, plus action items and key decisions for desktop recordings — `seameet_get_recording`
+- **Transcribe a file from this computer** — upload a local audio or video file (mp3, m4a, mp4, mov, wav, flac, ogg, oga, opus, webm, aac, amr, spx; up to 512 MB and 5 hours) and start a speaker-labeled transcription; it returns an `assetId` right away and tells the agent when to poll `seameet_get_recording` — `seameet_transcribe_file` *(runs in this local client, so it works in Claude Code, Codex, Cursor and Claude Desktop, but not from claude.ai on the web; uses your transcription allowance)*
 - Get a temporary media **stream/download URL** — `seameet_get_media_url`
 - Check storage usage — `seameet_get_usage`
 - Manage outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`) — `seameet_create_webhook` · `seameet_list_webhooks` · `seameet_update_webhook` · `seameet_delete_webhook`
@@ -33,7 +34,7 @@ It picks the richest available backend automatically and exposes the union of bo
 **🔌 Connection** *(any mode)*
 - Which modes are connected — `seameet_status` · disconnect cloud / switch accounts — `seameet_logout`
 
-That's **17 desktop tools + 8 cloud tools** (fetched live, so new releases appear automatically). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
+That's **17 desktop tools + 8 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
 
 ## Install
 
@@ -74,6 +75,11 @@ The generic block, accepted by most MCP clients:
 ### Cloud authorization (one-time, no key copy/paste)
 Cloud mode never activates unless you provide `SEAMEET_API_KEY` or complete the device flow. On the first cloud tool call with no key, the agent shows a short code + `https://app.seameet.ai/link`; you open it (signed in), click **Authorize**, and a read+write key is minted and cached at `~/.seameet/credentials.json`. Silent thereafter; revoke any time under **API keys** on your account. To disconnect or switch accounts, call `seameet_logout` (or `rm ~/.seameet/credentials.json`).
 
+### Transcribing large files
+`seameet_transcribe_file` uploads in 8 MB parts and sends stage notifications (`notifications/progress`: reading the file, checking your allowance, each part starting and finishing, finishing the upload, starting transcription), at most one per second. Hosts that reset their tool timeout on progress keep waiting while parts move, but a stalled transfer sends nothing, and hosts that don't reset on progress may cut off a long upload either way: in Claude Code, raise the tool timeout for big files, e.g. `MCP_TOOL_TIMEOUT=600000 claude` (10 minutes). Transcription itself runs in the cloud after the tool returns, so only the upload counts.
+
+The file is opened once, before anything is sent, and every part is read from that open file. If it is rewritten, grows, or is replaced at its path during the upload, the upload is stopped with `file_changed` rather than sending a mix of old and new bytes. A recording whose header says it is longer than 5 hours is refused before anything is sent.
+
 ### Claude Desktop one-click bundle
 `manifest.json` is an [MCPB](https://github.com/anthropics/mcpb) bundle manifest, so the server ships as a one-click Claude Desktop extension:
 
@@ -100,6 +106,8 @@ Just ask in plain language — the agent picks the right tool (and the right bac
 > What were the action items from my last meeting?
 
 > Take a screenshot and describe what's on it.
+
+> Transcribe ~/Downloads/interview.m4a
 
 <details>
 <summary><b>Desktop mode</b> — a full recording session (app running)</summary>
@@ -132,6 +140,7 @@ Just ask in plain language — the agent picks the right tool (and the right bac
 - "Now show its action items and key decisions."
 - "Pull the full speaker-labeled transcript for it, and its chapters."
 - "Get me a download/stream link for that recording's media."
+- "Transcribe ~/Downloads/interview.m4a" *(uploads it, then checks back until the transcript is ready)*
 - "How much SeaMeet storage am I using versus my quota?"
 - "Create a webhook to `https://webhook.site/<your-id>` that fires when AI results are ready."
 - "List my webhooks with their delivery health and signing secret."
@@ -164,6 +173,19 @@ Tool failures return structured JSON your agent can branch on:
 | `app_not_running` | Desktop app is closed — launch it (payload carries `install` commands + `downloadUrl`) |
 | `app_outdated` | App is running but too old — **update** to `requiredVersion` (don't reinstall the same build) |
 | `auth_required` | Cloud tool needs authorization — the payload has a `user_code` + the `/link` URL |
+| `insufficient_scope` | The API key is read-only — authorize a read+write key |
+| `unsupported_type` / `too_large` / `empty_file` | `seameet_transcribe_file` refused the file before uploading anything (a known length over 5 hours is `session_too_long`, also before uploading) |
+| `file_changed` | The file changed during the upload; the upload was stopped — call again once the file is finished being written |
+| `insufficient_allowance` / `free_exhausted` / `import_cap_reached` / `daily_import_limit` / `queue_full` / `session_too_long` | Not enough transcription allowance or room right now — the `hint` says what to tell the user |
+| `not_entitled` | This account can't transcribe files — check the plan at app.seameet.ai |
+| `disabled` | Transcription is turned off for this account — contact support |
+| `upload_failed` | The upload stopped; `step` says where (`upsert-asset`, `create`, `part <n>`, `complete`) and the partial upload is aborted (the asset entry may remain in your library). `cleanup: "failed"` means the abort itself failed; SeaMeet clears stale partial uploads on its own |
+| `upload_unknown` | The upload was sent but its completion wasn't confirmed (network drop at `complete`) — open `webUrl` to check before uploading again |
+| `service_unavailable` | SeaMeet is briefly unavailable — retry in a minute. During the upload `step` says where it stopped; once the upload completed, the payload carries `webUrl` to start transcription there |
+| `job_start_failed` | The file is in the library (`assetId`, `webUrl`) but transcription could not start — open `webUrl` to start it; don't re-run the tool, which would upload a duplicate |
+| `upload_incomplete` | SeaMeet was still finishing the upload after one retry — open `webUrl` in a minute to start transcription |
+| `cancelled` | The host cancelled the call before the transcription request was sent; the partial upload is aborted and no transcription starts |
+| `outcome_unknown` | The transcription request was sent but no answer came back (cancel, timeout or network drop) — it may have started, so check `asset.transcriptionJob` with `seameet_get_recording` before doing anything else |
 | `app_not_ready` | App is starting up — retry in a few seconds |
 | `invalid_request` | A required parameter is missing/invalid — re-check the tool schema |
 | `path_forbidden` | `filePath` must be inside the SeaMeet save directory |
@@ -180,12 +202,13 @@ Tool failures return structured JSON your agent can branch on:
 | `SEAMEET_BRIDGE_PORT` + `SEAMEET_BRIDGE_SECRET` | Bypass the bridge credentials file entirely |
 | `SEAMEET_CLOUD_CREDENTIALS_FILE` | Where the minted cloud key is cached (default `~/.seameet/credentials.json`) |
 | `SEAMEET_REMOTE_URL` / `SEAMEET_DEVICE_URL` | Override the cloud endpoints (default: production) |
+| `SEAMEET_SUPABASE_URL` / `SEAMEET_SUPABASE_ANON_KEY` / `SEAMEET_STT_PROXY_URL` / `SEAMEET_WEB_URL` | Override the endpoints `seameet_transcribe_file` uploads to and links (default: production) |
 
 ## Development
 
 ```bash
 npm install
-npm test             # credentials discovery + end-to-end stdio client against a fake bridge + fake cloud
+npm test             # wrapper tests (fake bridge + fake cloud) and upload tests (mocked fetch + temp files)
 npm run build:mcpb   # validate manifest.json + pack the Claude Desktop extension
 ```
 

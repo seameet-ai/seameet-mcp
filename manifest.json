@@ -3,9 +3,9 @@
   "manifest_version": "0.3",
   "name": "seameet",
   "display_name": "SeaMeet Recorder",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Connect Claude to SeaMeet recordings, transcripts, summaries, screenshots, and recording controls.",
-  "long_description": "Connects Claude to SeaMeet. When the SeaMeet desktop app is installed and running, Claude can start/stop/pause screen and audio recordings, take screenshots, read the live transcript mid-meeting, retrieve AI artifacts (summaries, transcripts, action items, key decisions, chapters, OCR), search recordings, and save its own notes back to a recording. When desktop mode is unavailable, the same MCP package can authorize through the SeaMeet web app to read synced cloud recordings, transcripts, summaries, and webhooks. Download SeaMeet: https://seameet.ai/download/. Terms: https://seameet.ai/en/terms/. Privacy: https://seameet.ai/en/privacy/.",
+  "long_description": "Connects Claude to SeaMeet. When the SeaMeet desktop app is installed and running, Claude can start/stop/pause screen and audio recordings, take screenshots, read the live transcript mid-meeting, retrieve AI artifacts (summaries, transcripts, action items, key decisions, chapters, OCR), search recordings, and save its own notes back to a recording. When desktop mode is unavailable, the same MCP package can authorize through the SeaMeet web app to read synced cloud recordings, transcripts, summaries, and webhooks, and Claude can upload an audio or video file from this computer (mp3, m4a, mp4, mov, wav and more, up to 512 MB) for speaker-labeled transcription with seameet_transcribe_file. Download SeaMeet: https://seameet.ai/download/. Terms: https://seameet.ai/en/terms/. Privacy: https://seameet.ai/en/privacy/.",
   "author": {
     "name": "SeaMeet.ai",
     "email": "info@seameet.ai",

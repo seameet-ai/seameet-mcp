@@ -1,7 +1,7 @@
 {
   "name": "@seameet/mcp",
-  "version": "0.2.3",
-  "description": "Dual-mode MCP server for SeaMeet — let AI agents (Claude Code, Codex, Cursor) drive the desktop recorder when it's running, else read your synced cloud library and manage webhooks. Cloud mode authorizes by logging into the web app — no key copy/paste.",
+  "version": "0.3.0",
+  "description": "Dual-mode MCP server for SeaMeet — let AI agents (Claude Code, Codex, Cursor) drive the desktop recorder when it's running, else read your synced cloud library, manage webhooks, and upload local audio/video files for transcription. Cloud mode authorizes by logging into the web app — no key copy/paste.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -52,10 +52,11 @@
   },
   "scripts": {
     "start": "node bin/seameet-mcp.js",
-    "test": "node test/wrapper.test.js",
+    "test": "node test/wrapper.test.js && node test/upload.test.js",
     "build:mcpb": "npx -y @anthropic-ai/mcpb validate manifest.json && npx -y @anthropic-ai/mcpb pack . dist/seameet.mcpb"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0"
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "music-metadata": "^11.16.1"
   }
 }
