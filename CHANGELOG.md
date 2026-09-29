@@ -22,10 +22,23 @@ All notable changes to `@seameet/mcp`. Format based on
   transcription allowance, and needs a read+write key (the one cloud
   authorization mints). Before uploading it checks your remaining allowance and
   daily upload limit, so a file that can't be transcribed isn't uploaded.
-- Upload progress is reported after each 8 MB part, so hosts that extend their
-  timeout on progress don't cut off a big upload.
-- Cancelling the call from your agent stops the upload, cleans up the partial
-  upload and never starts a transcription.
+- Upload progress arrives as stage notifications (reading the file, checking
+  your allowance, each 8 MB part starting and finishing, finishing, starting
+  transcription), at most one per second, so hosts that extend their timeout
+  on progress don't cut off a big upload. A stalled transfer still needs a long
+  enough host timeout (`MCP_TOOL_TIMEOUT` in Claude Code).
+- Cancelling the call from your agent stops the upload and cleans up the
+  partial upload. Cancelled before the transcription request was sent, no
+  transcription starts (`cancelled`); cancelled after it was sent, the tool
+  says it may have started (`outcome_unknown`) so your agent checks
+  `seameet_get_recording` instead of trying again.
+- The file is read from one open handle from validation to the last byte; if
+  it changes during the upload you get `file_changed` instead of a corrupted
+  upload. Recordings known to be over 5 hours are refused before uploading.
+- After the upload has finished, every error points at the file's page on
+  app.seameet.ai instead of suggesting a re-run, so a retry never uploads a
+  duplicate. An upload whose completion couldn't be confirmed reports
+  `upload_unknown` with that link.
 - New config: `SEAMEET_SUPABASE_URL`, `SEAMEET_SUPABASE_ANON_KEY`,
   `SEAMEET_STT_PROXY_URL`, `SEAMEET_WEB_URL`.
 
@@ -33,6 +46,12 @@ All notable changes to `@seameet/mcp`. Format based on
 - New dependency: `music-metadata`, used to read a file's length and whether it
   has a picture before uploading.
 - The server now reports its real package version in the MCP handshake.
+
+### Security
+- Requests that carry your API key never follow redirects, so the key can't be
+  forwarded to another host. Server responses are size-capped and time-bounded.
+- A rejected key is forgotten only if it is still the one saved on disk, so a
+  slow request can't delete a key you authorized in the meantime.
 
 ## [0.2.3] - 2026-07-14
 

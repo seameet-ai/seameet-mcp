@@ -3,8 +3,10 @@
  * cloud transcription job, using the same sequence the web app's /transcribe
  * page runs (web/src/library/importAudio.ts):
  *
- *   1. validate (extension allowlist, 1 byte … 512 MiB)       — no network
- *   2. probe duration + video track with music-metadata         — no network
+ *   1. open the file once, validate it through that fd (regular file,
+ *      extension allowlist, 1 byte … 512 MiB)                    — no network
+ *   2. probe duration + video track with music-metadata on the same fd
+ *      (a known duration over 5 h is refused here)              — no network
  *   3. GET  stt-proxy /v1/file/budget   (advisory pre-check; never blocks on failure)
  *   4. sync-api upsert-asset            (the web's exact `web-upload` identity)
  *   5. sync-api multipart-create → multipart-sign + PUT per 8 MiB part → multipart-complete
@@ -22,6 +24,7 @@ import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,6 +65,12 @@ export const PART_PUT_BASE_TIMEOUT_MS = 120000;
 export const PART_PUT_TIMEOUT_MS = PART_PUT_BASE_TIMEOUT_MS * MAX_PARTS_IN_FLIGHT; // 360 s
 // A 409 not_synced at job start means R2/the row hadn't settled yet; retry once.
 export const JOB_RETRY_DELAY_MS = 2000;
+// JSON responses are read with a byte cap, inside the request's timeout.
+export const MAX_JSON_BYTES = 1024 * 1024;
+// The longest recording one job can transcribe (stt-proxy SESSION_CAP_MS).
+export const MAX_SESSION_MS = 5 * 3600 * 1000;
+// Stage progress notifications are throttled to at most one per second.
+export const PROGRESS_MIN_INTERVAL_MS = 1000;
 
 export const TITLE_MAX_CODE_POINTS = 120;
 export const MAX_HOTWORDS = 100;
@@ -105,6 +114,7 @@ export function uploadConfig(env = process.env) {
   };
 }
 
+
 // ---------------------------------------------------------------------------
 // Errors (the epic's one shape) + relayable hints
 // ---------------------------------------------------------------------------
@@ -129,33 +139,55 @@ function envKeyInUse(env) {
   return typeof env.SEAMEET_API_KEY === 'string' && env.SEAMEET_API_KEY.startsWith('smk_');
 }
 
-/** One plain sentence per code, safe to repeat to the user as-is. */
+/**
+ * One plain sentence per code, safe to repeat to the user as-is.
+ *
+ * `ctx.webUrl` is set only once the upload is complete. From then on every
+ * hint points at that existing asset and never says to run the tool again:
+ * a re-run would upload a duplicate.
+ */
 export function hintFor(code, ctx = {}) {
+  const w = ctx.webUrl;
   switch (code) {
     case 'auth_required':
       return ctx.envKey
         ? 'The SEAMEET_API_KEY set in your environment was rejected (revoked?); replace it with a valid key from https://app.seameet.ai/account, or unset it to authorize in the browser instead.'
         : 'Your SeaMeet cloud key was rejected (revoked?) and has been forgotten; call this tool again to re-authorize in the browser.';
     case 'insufficient_scope':
+      if (w) return `The transcription service needs a key with write access, so transcription did not start; the file is saved, so open ${w} to start transcription there.`;
       return ctx.envKey
         ? 'The SEAMEET_API_KEY set in your environment is read-only; replace it with a read+write key from https://app.seameet.ai/account.'
         : 'This needs a SeaMeet key with write access; call seameet_logout, then call this tool again to authorize a read+write key.';
     case 'free_exhausted':
-      return 'Your free transcription hours are used up; upgrade at app.seameet.ai to keep transcribing.';
+      return w
+        ? `Your free transcription hours are used up; upgrade at app.seameet.ai, then open ${w} to transcribe this file.`
+        : 'Your free transcription hours are used up; upgrade at app.seameet.ai to keep transcribing.';
     case 'import_cap_reached':
-      return "You've used this billing period's transcription hours; they renew with your next billing period, and app.seameet.ai/account shows when.";
+      return w
+        ? `You've used this billing period's transcription hours; the file is saved, so open ${w} to transcribe it once your hours renew.`
+        : "You've used this billing period's transcription hours; they renew with your next billing period, and app.seameet.ai/account shows when.";
     case 'not_entitled':
-      return "This SeaMeet account can't transcribe files yet; sign in at app.seameet.ai to check your plan.";
+      return w
+        ? `This SeaMeet account can't transcribe files yet; check your plan at app.seameet.ai, then open ${w} to transcribe this file.`
+        : "This SeaMeet account can't transcribe files yet; sign in at app.seameet.ai to check your plan.";
     case 'disabled':
-      return 'Transcription is turned off for this SeaMeet account; contact SeaMeet support at info@seameet.ai.';
+      return w
+        ? `Transcription is turned off for this SeaMeet account; contact SeaMeet support at info@seameet.ai, and the file stays in your library at ${w}.`
+        : 'Transcription is turned off for this SeaMeet account; contact SeaMeet support at info@seameet.ai.';
     case 'daily_import_limit':
-      return "You've reached today's upload limit; try again tomorrow.";
+      return w
+        ? `You've reached today's transcription limit; the file is saved, so open ${w} tomorrow to start transcription there.`
+        : "You've reached today's upload limit; try again tomorrow.";
     case 'queue_full':
-      return 'You already have the most files transcribing at once; wait for one to finish, then try again.';
+      return w
+        ? `You already have the most files transcribing at once; when one finishes, open ${w} to start this one.`
+        : 'You already have the most files transcribing at once; wait for one to finish, then try again.';
     case 'session_too_long':
-      return 'This recording is longer than 5 hours, the most SeaMeet transcribes in one file; split it and try again.';
+      return w
+        ? `This recording is longer than 5 hours, the most SeaMeet transcribes in one file; it stays in your library at ${w}, and to transcribe it, split it into shorter files.`
+        : 'This recording is longer than 5 hours, the most SeaMeet transcribes in one file; split it and try again.';
     case 'upload_incomplete':
-      return `SeaMeet was still finishing the upload, so transcription did not start; open ${ctx.webUrl} in a minute to start transcription there.`;
+      return `SeaMeet was still finishing the upload, so transcription did not start; open ${w} in a minute to start transcription there.`;
     case 'too_large':
       return ctx.quota
         ? 'Your SeaMeet cloud storage is full; free up space or upgrade at app.seameet.ai, then try again.'
@@ -166,20 +198,32 @@ export function hintFor(code, ctx = {}) {
       return `SeaMeet can transcribe ${ALLOWED_EXTENSIONS.join(', ')} files; convert this one to one of those formats and try again.`;
     case 'empty_file':
       return 'That file is empty (0 bytes); check the path and try again.';
+    case 'file_changed':
+      return 'The file changed while it was uploading, so the upload was stopped; wait until it has finished being written, then call this tool again.';
     case 'upload_failed':
-      return `The upload stopped at step "${ctx.step}"; check the network connection and call this tool again.`;
+      return ctx.cleanup === 'failed'
+        ? `The upload stopped at step "${ctx.step}" and its cleanup failed (SeaMeet clears stale partial uploads on its own); check the network connection and call this tool again.`
+        : `The upload stopped at step "${ctx.step}"; check the network connection and call this tool again.`;
+    case 'upload_unknown':
+      return `The upload may have finished; open ${w} to check before uploading again.`;
     case 'service_unavailable':
-      return ctx.webUrl
-        ? `SeaMeet is briefly unavailable; the file is saved at ${ctx.webUrl}, so try this tool again in a minute or start transcription there.`
+      return w
+        ? `SeaMeet is briefly unavailable, so transcription did not start; open ${w} in a minute to start transcription there.`
         : 'SeaMeet is briefly unavailable; call this tool again in a minute.';
     case 'job_start_failed':
-      return `The file is in your SeaMeet library but transcription could not start; open ${ctx.webUrl} to start it there.`;
+      return `The file is in your SeaMeet library but transcription could not start; open ${w} to start it there.`;
+    case 'outcome_unknown':
+      return 'Transcription may have started; check asset.transcriptionJob with seameet_get_recording before doing anything else.';
     case 'cancelled':
+      if (w) return `The request was cancelled before transcription started; the file is saved, so open ${w} to start transcription there.`;
+      if (ctx.cleanup === 'failed') return 'The upload was cancelled and nothing was transcribed; cleaning up the partial upload failed, but SeaMeet clears stale partial uploads on its own.';
       return ctx.assetId
         ? 'The upload was cancelled and nothing was transcribed; the partial upload was aborted, though an empty entry may remain in your SeaMeet library.'
         : 'The upload was cancelled before anything was sent.';
     default:
-      return 'Something went wrong talking to SeaMeet; try again in a minute.';
+      return w
+        ? `Something went wrong after the upload finished; open ${w} to start transcription there.`
+        : 'Something went wrong talking to SeaMeet; try again in a minute.';
   }
 }
 
@@ -208,69 +252,221 @@ export function pollAfterSeconds(estimatedDurationMs) {
   return Math.min(POLL_MAX_SECONDS, Math.max(POLL_MIN_SECONDS, s));
 }
 
-function withTimeout(promise, ms) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(Object.assign(new Error(`timed out after ${ms} ms`), { code: 'ETIMEDOUT' })), ms);
-    }),
-  ]).finally(() => clearTimeout(timer));
+export class CancelledError extends Error {
+  constructor() {
+    super('Cancelled by the client.');
+    this.name = 'CancelledError';
+  }
 }
 
 /**
- * Validate the file without touching the network.
- * @returns {Promise<{ok:true, filePath, ext, sizeBytes, baseName} | {ok:false, payload}>}
+ * One signal that aborts when any input does, wired by hand. Not
+ * AbortSignal.any: it is missing before Node 18.17, and on Node 18.20 a
+ * signal composed from another composed signal never fired in our tests (the
+ * upload nests them: request timeout → part scope → cancel). The listeners
+ * stay attached until dispose() — callers dispose only after the response
+ * body has been consumed, so an abort still reaches a body read in progress.
  */
-export async function checkFile(rawPath) {
+export function anySignal(signals) {
+  const list = signals.filter(Boolean);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  for (const s of list) {
+    if (s.aborted) { controller.abort(); break; }
+    s.addEventListener('abort', onAbort, { once: true });
+  }
+  return { signal: controller.signal, dispose: () => list.forEach((s) => s.removeEventListener('abort', onAbort)) };
+}
+
+/**
+ * Settle with `promise`, or reject as soon as `signal` aborts — so a fetch
+ * implementation that ignores its signal still can't outlive a timeout or a
+ * cancel.
+ */
+function raceAbort(promise, signal) {
+  if (!signal) return promise;
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  aborted.catch(() => {});
+  return Promise.race([promise, aborted]).finally(() => signal.removeEventListener('abort', onAbort));
+}
+
+/** Read a response body as text, at most `maxBytes`, stopping when `signal` aborts. */
+export async function readCappedText(res, maxBytes, signal) {
+  const body = res.body;
+  if (!body || typeof body.getReader !== 'function') {
+    const text = await res.text();
+    if (Buffer.byteLength(text) > maxBytes) throw Object.assign(new Error(`response larger than ${maxBytes} bytes`), { code: 'bad_response' });
+    return text;
+  }
+  const reader = body.getReader();
+  const onAbort = () => { reader.cancel().catch(() => {}); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      if (signal?.aborted) throw new Error('aborted while reading the response');
+      const { done, value } = await raceAbort(reader.read(), signal);
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        reader.cancel().catch(() => {});
+        throw Object.assign(new Error(`response larger than ${maxBytes} bytes`), { code: 'bad_response' });
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+    }
+    if (signal?.aborted) throw new Error('aborted while reading the response');
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// File: one fd for validation, probe and every part
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the file ONCE and validate it through that fd, so the bytes validated,
+ * probed and uploaded all come from the same file even if the path is swapped
+ * afterwards. The caller owns `handle` and must close it.
+ * @returns {Promise<{ok:true, handle, filePath, ext, sizeBytes, baseName, stat} | {ok:false, payload}>}
+ */
+export async function openFile(rawPath) {
+  // trim() only detects blank input: the path itself is used unmodified, so
+  // "/tmp/x.wav " never silently becomes "/tmp/x.wav".
   if (typeof rawPath !== 'string' || !rawPath.trim()) {
     return { ok: false, payload: toolError('invalid_request', 'path is required.', 'Pass the absolute or ~ path of an audio or video file on this machine.') };
   }
-  const filePath = path.resolve(expandHome(rawPath.trim()));
-  let st;
-  try {
-    st = await fs.promises.stat(filePath);
-  } catch (err) {
-    const missing = err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
-    return {
-      ok: false,
-      payload: toolError(
-        'invalid_request',
-        missing ? `No file at ${filePath}.` : `Cannot read ${filePath}: ${err?.message || err}.`,
-        missing ? 'Check the path (it must be on this machine) and try again.' : 'Check that the file is readable and try again.',
-      ),
-    };
-  }
-  if (!st.isFile()) {
-    return { ok: false, payload: toolError('invalid_request', `${filePath} is not a regular file.`, 'Pass the path of a single audio or video file, not a folder.') };
-  }
+  const filePath = path.resolve(expandHome(rawPath));
   const base = path.basename(filePath);
   const dot = base.lastIndexOf('.');
   const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+  let pre;
+  try {
+    pre = await fs.promises.stat(filePath);
+  } catch (err) {
+    return { ok: false, payload: statError(filePath, err) };
+  }
+  // Checked before open(): a FIFO or device could block open()/read().
+  if (!pre.isFile()) {
+    return { ok: false, payload: toolError('invalid_request', `${filePath} is not a regular file.`, 'Pass the path of a single audio or video file, not a folder, pipe or device.') };
+  }
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
     return { ok: false, payload: toolError('unsupported_type', `.${ext || '(none)'} files are not supported.`, hintFor('unsupported_type')) };
   }
-  if (st.size <= 0) return { ok: false, payload: toolError('empty_file', 'The file is empty.', hintFor('empty_file')) };
-  if (st.size > MAX_FILE_BYTES) {
-    return { ok: false, payload: toolError('too_large', `The file is ${Math.ceil(st.size / 1048576)} MB; the limit is 512 MB.`, hintFor('too_large')) };
+  let handle;
+  try {
+    handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+  } catch (err) {
+    return { ok: false, payload: statError(filePath, err) };
   }
-  const baseName = (dot > 0 ? base.slice(0, dot) : base).trim() || base;
-  return { ok: true, filePath, ext, sizeBytes: st.size, baseName };
+  try {
+    // Re-check through the fd: the path may have been swapped since stat().
+    const st = await handle.stat();
+    if (!st.isFile()) {
+      await handle.close();
+      return { ok: false, payload: toolError('invalid_request', `${filePath} is not a regular file.`, 'Pass the path of a single audio or video file, not a folder, pipe or device.') };
+    }
+    if (st.size <= 0) {
+      await handle.close();
+      return { ok: false, payload: toolError('empty_file', 'The file is empty.', hintFor('empty_file')) };
+    }
+    if (st.size > MAX_FILE_BYTES) {
+      await handle.close();
+      return { ok: false, payload: toolError('too_large', `The file is ${Math.ceil(st.size / 1048576)} MB; the limit is 512 MB.`, hintFor('too_large')) };
+    }
+    const baseName = (dot > 0 ? base.slice(0, dot) : base).trim() || base;
+    return { ok: true, handle, filePath, ext, sizeBytes: st.size, baseName, stat: st };
+  } catch (err) {
+    try { await handle.close(); } catch { /* ignore */ }
+    return { ok: false, payload: statError(filePath, err) };
+  }
+}
+
+function statError(filePath, err) {
+  const missing = err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
+  return toolError(
+    'invalid_request',
+    missing ? `No file at ${filePath}.` : `Cannot read ${filePath}: ${err?.message || err}.`,
+    missing ? 'Check the path (it must be on this machine) and try again.' : 'Check that the file is readable and try again.',
+  );
+}
+
+/** Validate a path without keeping it open (tests + callers that only check). */
+export async function checkFile(rawPath) {
+  const r = await openFile(rawPath);
+  if (r.ok) {
+    await r.handle.close();
+    const { handle, stat, ...rest } = r;
+    void handle; void stat;
+    return rest;
+  }
+  return r;
 }
 
 /**
- * Best-effort header probe. `duration:false` so a header without a length
- * never triggers a whole-file scan; a missing or 0 duration (fragmented MP4)
- * is omitted and the worker reserves the safe maximum.
+ * A Readable over positional reads of `handle`. Node's own fd/FileHandle read
+ * streams close the descriptor on destroy() even with autoClose:false, and the
+ * upload still needs it, so the probe gets this instead: destroying it only
+ * stops reading.
  */
-export async function probeMedia(filePath, ext, { parseFile, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
+export function handleReadStream(handle, size, chunkBytes = 64 * 1024) {
+  let pos = 0;
+  return new Readable({
+    highWaterMark: chunkBytes,
+    read() {
+      const len = Math.min(chunkBytes, size - pos);
+      if (len <= 0) { this.push(null); return; }
+      const buf = Buffer.alloc(len);
+      handle.read(buf, 0, len, pos).then(({ bytesRead }) => {
+        if (this.destroyed) return;
+        if (bytesRead === 0) { this.push(null); return; }
+        pos += bytesRead;
+        this.push(bytesRead === len ? buf : buf.subarray(0, bytesRead));
+      }, (err) => { if (!this.destroyed) this.destroy(err); });
+    },
+  });
+}
+
+/**
+ * Best-effort header probe over the already-open handle. `duration:false` so a
+ * header without a length never triggers a whole-file scan; a missing or 0
+ * duration (fragmented MP4) is omitted and the worker reserves the safe
+ * maximum. The input stream is destroyed on timeout or cancel, so a stuck
+ * probe stops reading instead of running on in the background.
+ */
+export async function probeMedia(handle, { ext, sizeBytes, name, parseStream, timeoutMs = PROBE_TIMEOUT_MS, signal } = {}) {
   let format = null;
+  let stream;
+  let timer;
+  let onAbort;
   try {
-    const parse = parseFile ?? (await import('music-metadata')).parseFile;
-    const meta = await withTimeout(Promise.resolve().then(() => parse(filePath, { duration: false, skipCovers: true })), timeoutMs);
+    const parse = parseStream ?? (await import('music-metadata')).parseStream;
+    stream = handleReadStream(handle, sizeBytes);
+    stream.on('error', () => {}); // destroy() below must not surface as an unhandled error
+    const stop = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error(`probe timed out after ${timeoutMs} ms`), { code: 'ETIMEDOUT' })), timeoutMs);
+      if (signal) {
+        onAbort = () => reject(new CancelledError());
+        if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+    const meta = await Promise.race([
+      Promise.resolve().then(() => parse(stream, { size: sizeBytes, path: name }, { duration: false, skipCovers: true })),
+      stop,
+    ]);
     format = meta?.format ?? null;
   } catch {
     format = null;
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+    if (stream && !stream.destroyed) stream.destroy();
   }
   const d = format?.duration;
   const estimatedDurationMs = Number.isFinite(d) && d > 0 ? Math.round(d * 1000) : undefined;
@@ -313,76 +509,6 @@ function validateOptions(args) {
 // HTTP
 // ---------------------------------------------------------------------------
 
-export class CancelledError extends Error {
-  constructor() {
-    super('Cancelled by the client.');
-    this.name = 'CancelledError';
-  }
-}
-
-/**
- * One signal that aborts when any input does. AbortSignal.any needs Node
- * 20.3 / 18.17; package.json allows Node >= 18.0, so fall back to wiring it
- * by hand. The returned dispose() detaches the listeners.
- */
-export function anySignal(signals) {
-  const list = signals.filter(Boolean);
-  if (typeof AbortSignal.any === 'function') return { signal: AbortSignal.any(list), dispose: () => {} };
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  for (const s of list) {
-    if (s.aborted) { controller.abort(); break; }
-    s.addEventListener('abort', onAbort, { once: true });
-  }
-  return { signal: controller.signal, dispose: () => list.forEach((s) => s.removeEventListener('abort', onAbort)) };
-}
-
-/** Run fetch with a timeout, also aborted by the caller's `signal` (→ CancelledError). */
-async function fetchWithSignal(fetchImpl, url, init, timeoutMs, signal) {
-  if (signal?.aborted) throw new CancelledError();
-  const timeout = new AbortController();
-  const timer = setTimeout(() => timeout.abort(), timeoutMs);
-  const combined = anySignal([timeout.signal, signal]);
-  try {
-    return await fetchImpl(url, { ...init, signal: combined.signal });
-  } catch (err) {
-    if (signal?.aborted) throw new CancelledError();
-    if (timeout.signal.aborted) throw Object.assign(new Error(`timed out after ${timeoutMs} ms`), { code: 'ETIMEDOUT' });
-    throw err;
-  } finally {
-    clearTimeout(timer);
-    combined.dispose();
-  }
-}
-
-async function httpJson(fetchImpl, url, init, timeoutMs, signal) {
-  if (signal?.aborted) throw new CancelledError();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const combined = anySignal([controller.signal, signal]);
-  try {
-    let res;
-    try {
-      res = await fetchImpl(url, { ...init, signal: combined.signal });
-    } catch (err) {
-      if (signal?.aborted) throw new CancelledError();
-      throw err;
-    }
-    let body = null;
-    try {
-      const text = await res.text();
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = null;
-    }
-    if (signal?.aborted) throw new CancelledError();
-    return { status: res.status, body };
-  } finally {
-    clearTimeout(timer);
-    combined.dispose();
-  }
-}
-
 class HttpFailure extends Error {
   constructor(status, body, source) {
     super((body && (body.detail || body.error)) || `HTTP ${status}`);
@@ -392,47 +518,96 @@ class HttpFailure extends Error {
   }
 }
 
-function makeClients(cfg, key, fetchImpl, defaultSignal) {
+/** A transport failure: `sent` = the request may have reached the server. */
+class TransportError extends Error {
+  constructor(message, { sent, cause } = {}) {
+    super(message);
+    this.sent = !!sent;
+    this.cause = cause;
+  }
+}
+
+/**
+ * fetch + a capped JSON body read, all inside one timeout and cancel scope.
+ * Never follows redirects (they could carry X-Api-Key to another host).
+ * A 2xx whose body can't be read or parsed is an error, never `null`.
+ */
+async function httpJson(fetchImpl, url, init, timeoutMs, signal) {
+  if (signal?.aborted) throw new CancelledError();
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const combined = anySignal([timeout.signal, signal]);
+  let res;
+  try {
+    try {
+      res = await raceAbort(fetchImpl(url, { ...init, redirect: 'error', signal: combined.signal }), combined.signal);
+    } catch (err) {
+      if (signal?.aborted) throw new CancelledError();
+      // No response (network error, timeout, a refused 3xx): whether the
+      // server acted on the request is unknown, so treat it as maybe-sent.
+      throw new TransportError(timeout.signal.aborted ? `timed out after ${timeoutMs} ms` : (err?.message || String(err)), { sent: true, cause: err });
+    }
+    const ok = res.status >= 200 && res.status < 300;
+    let text;
+    try {
+      text = await readCappedText(res, MAX_JSON_BYTES, combined.signal);
+    } catch (err) {
+      if (signal?.aborted) throw new CancelledError();
+      if (!ok) return { status: res.status, body: null };
+      throw new TransportError(timeout.signal.aborted ? `timed out reading the response after ${timeoutMs} ms` : `unreadable response: ${err?.message || err}`, { sent: true, cause: err });
+    }
+    let body = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    if (ok && (body === null || typeof body !== 'object')) {
+      throw new TransportError('the response was not a JSON object', { sent: true });
+    }
+    return { status: res.status, body };
+  } finally {
+    clearTimeout(timer);
+    combined.dispose();
+  }
+}
+
+function makeClients(cfg, key, fetchImpl, defaultSignal, apiTimeoutMs = API_TIMEOUT_MS) {
   // `signal` defaults to the caller's cancellation signal; pass null for
   // cleanup calls (multipart-abort) that must still go out after a cancel.
   async function syncApi(op, args = {}, signal = defaultSignal) {
-    let r;
-    try {
-      r = await httpJson(fetchImpl, `${cfg.supabaseUrl}/functions/v1/sync-api`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${cfg.anonKey}`,
-          apikey: cfg.anonKey,
-          'X-Api-Key': key,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ...args, op }),
-      }, API_TIMEOUT_MS, signal);
-    } catch (err) {
-      if (err instanceof CancelledError) throw err;
-      throw Object.assign(new Error(`sync-api ${op}: ${err?.message || err}`), { network: true });
-    }
+    const r = await httpJson(fetchImpl, `${cfg.supabaseUrl}/functions/v1/sync-api`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.anonKey}`,
+        apikey: cfg.anonKey,
+        'X-Api-Key': key,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ...args, op }),
+    }, apiTimeoutMs, signal);
     if (r.status < 200 || r.status >= 300) throw new HttpFailure(r.status, r.body, 'sync-api');
-    return r.body || {};
+    return r.body;
   }
 
-  async function stt(method, route, body, timeoutMs = API_TIMEOUT_MS) {
-    let r;
-    try {
-      r = await httpJson(fetchImpl, `${cfg.sttProxyUrl}${route}`, {
-        method,
-        headers: { 'X-Api-Key': key, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      }, timeoutMs, defaultSignal);
-    } catch (err) {
-      if (err instanceof CancelledError) throw err;
-      throw Object.assign(new Error(`stt-proxy ${route}: ${err?.message || err}`), { network: true });
-    }
+  async function stt(method, route, body, timeoutMs = apiTimeoutMs) {
+    const r = await httpJson(fetchImpl, `${cfg.sttProxyUrl}${route}`, {
+      method,
+      headers: { 'X-Api-Key': key, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    }, timeoutMs, defaultSignal);
     if (r.status < 200 || r.status >= 300) throw new HttpFailure(r.status, r.body, 'stt-proxy');
-    return r.body || {};
+    return r.body;
   }
 
   return { syncApi, stt };
+}
+
+/** A 2xx that lacks a field the next step needs. */
+function requireField(body, field, what) {
+  const v = body?.[field];
+  if (typeof v !== 'string' || !v) throw new TransportError(`${what} returned no ${field}`, { sent: true });
+  return v;
 }
 
 const PASS_THROUGH_STT_CODES = new Set([
@@ -465,6 +640,27 @@ export function mapHttpFailure(err) {
 }
 
 // ---------------------------------------------------------------------------
+// Progress: throttled stage notifications, never awaited
+// ---------------------------------------------------------------------------
+
+function makeProgress(onProgress, total, now) {
+  let count = 0;
+  let lastSent = -Infinity;
+  return (message, { force = false } = {}) => {
+    count++;
+    if (!onProgress) return;
+    const t = now();
+    if (!force && t - lastSent < PROGRESS_MIN_INTERVAL_MS) return;
+    lastSent = t;
+    // Fire and forget: notification backpressure must never hold a worker,
+    // a cancel or cleanup.
+    try {
+      Promise.resolve(onProgress(Math.min(count, total), total, message)).catch(() => {});
+    } catch { /* ignore */ }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The tool
 // ---------------------------------------------------------------------------
 
@@ -475,13 +671,28 @@ export function mapHttpFailure(err) {
  * @param {object} o.args                    tool arguments
  * @param {typeof fetch} [o.fetchImpl]
  * @param {(ms:number)=>Promise<void>} [o.sleep]   injectable for fast tests
- * @param {(done:number,total:number)=>Promise<void>|void} [o.onProgress]
- * @param {()=>void} [o.onUnauthorized]      a 401: drop the cached key
- * @param {Function} [o.parseFile]           music-metadata parseFile override
+ * @param {(progress:number,total:number,message:string)=>unknown} [o.onProgress]  fire-and-forget
+ * @param {()=>void} [o.onUnauthorized]      a sync-api 401: drop the cached key
+ * @param {Function} [o.parseStream]         music-metadata parseStream override
  * @param {()=>string} [o.randomUUID]
  * @param {AbortSignal} [o.signal]           MCP request cancellation
+ * @param {()=>number} [o.now]               clock for progress throttling
+ * @param {(handle:object)=>Promise<void>} [o.beforeComplete]  test hook
  */
-export async function transcribeFile({
+export async function transcribeFile(o = {}) {
+  // Arguments, then the file — neither touches the network.
+  const opts = validateOptions(o.args || {});
+  if (opts.error) return toolError('invalid_request', opts.error, 'Fix that argument and call the tool again.');
+  const opened = await openFile(o.args?.path).catch((err) => ({ ok: false, payload: statError(String(o.args?.path), err) }));
+  if (!opened.ok) return opened.payload;
+  try {
+    return await runUpload(o, opened);
+  } finally {
+    try { await opened.handle.close(); } catch { /* ignore */ }
+  }
+}
+
+async function runUpload({
   env = process.env,
   key,
   args = {},
@@ -489,50 +700,56 @@ export async function transcribeFile({
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   onProgress,
   onUnauthorized,
-  parseFile,
+  parseStream,
   randomUUID = nodeRandomUUID,
   probeTimeoutMs = PROBE_TIMEOUT_MS,
   partTimeoutMs = PART_PUT_TIMEOUT_MS,
   jobRetryDelayMs = JOB_RETRY_DELAY_MS,
   signal,
-} = {}) {
+  now = Date.now,
+  beforeComplete,
+  apiTimeoutMs = API_TIMEOUT_MS,
+} = {}, file) {
   const cfg = uploadConfig(env);
   const envKey = envKeyInUse(env);
+  const { handle } = file;
 
-  // 1. Validate — no network before this passes.
-  const opts = validateOptions(args || {});
-  if (opts.error) return toolError('invalid_request', opts.error, 'Fix that argument and call the tool again.');
-  const file = await checkFile(args?.path);
-  if (!file.ok) return file.payload;
+  const opts = validateOptions(args || {}); // already checked by transcribeFile
 
-  // 2. Probe.
-  const { estimatedDurationMs, hasVideo } = await probeMedia(file.filePath, file.ext, { parseFile, timeoutMs: probeTimeoutMs });
-  const estimatedMinutes = estimatedDurationMs !== undefined ? Math.round(estimatedDurationMs / 60000) : null;
+  const total = partCount(file.sizeBytes);
+  // probing, allowance, upload started, 2 per part, completing, starting job
+  const report = makeProgress(onProgress, 5 + 2 * total, now);
 
-  const { syncApi, stt } = makeClients(cfg, key, fetchImpl, signal);
   // Backoff sleeps end early on cancel so a cancelled call returns promptly.
-  const pause = (ms) => new Promise((resolve) => {
-    if (!signal) { Promise.resolve(sleep(ms)).then(resolve, resolve); return; }
-    if (signal.aborted) { resolve(); return; }
+  const pauseOn = (ms, sig) => new Promise((resolve) => {
+    if (!sig) { Promise.resolve(sleep(ms)).then(resolve, resolve); return; }
+    if (sig.aborted) { resolve(); return; }
     const onAbort = () => resolve();
-    signal.addEventListener('abort', onAbort, { once: true });
-    Promise.resolve(sleep(ms)).then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, resolve);
+    sig.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve(sleep(ms)).then(() => { sig.removeEventListener('abort', onAbort); resolve(); }, resolve);
   });
-  let assetId;
-  let uploadComplete = false; // webUrl only means something once the bytes are in
 
-  const cancelled = (step) => toolError(
+  const { syncApi, stt } = makeClients(cfg, key, fetchImpl, signal, apiTimeoutMs);
+  let assetId;
+  let uploadId;
+  let uploadComplete = false; // webUrl only means something once the bytes are in
+  const webUrlOf = () => `${cfg.webUrl}/r/${assetId}`;
+
+  const cancelled = (step, extra = {}) => toolError(
     'cancelled',
     'The request was cancelled.',
-    hintFor('cancelled', { assetId }),
-    { ...(step ? { step } : {}), ...(assetId ? { assetId } : {}) },
+    hintFor('cancelled', { assetId, webUrl: uploadComplete ? webUrlOf() : undefined, cleanup: extra.cleanup }),
+    { ...(step ? { step } : {}), ...(assetId ? { assetId } : {}), ...(uploadComplete ? { webUrl: webUrlOf() } : {}), ...extra },
   );
 
   const fail = (err, fallbackCode, extras = {}) => {
-    if (err instanceof CancelledError || signal?.aborted) return cancelled(extras.step);
+    if (err instanceof CancelledError || signal?.aborted) {
+      const { step, ...rest } = extras;
+      return cancelled(step, rest);
+    }
     const mapped = mapHttpFailure(err);
-    const webUrl = uploadComplete ? `${cfg.webUrl}/r/${assetId}` : undefined;
-    const ctxExtras = { ...(assetId ? { assetId } : {}), ...extras };
+    const webUrl = uploadComplete ? webUrlOf() : undefined;
+    const ctxExtras = { ...(assetId ? { assetId } : {}), ...(webUrl ? { webUrl } : {}), ...extras };
     if (mapped?.auth) {
       try { onUnauthorized?.(); } catch { /* best-effort */ }
       return toolError('auth_required', 'Your SeaMeet cloud key was rejected.', hintFor('auth_required', { envKey }), ctxExtras);
@@ -546,15 +763,31 @@ export async function transcribeFile({
     return toolError(
       fallbackCode,
       err?.message || String(err),
-      hintFor(fallbackCode, { step: extras.step, webUrl }),
+      hintFor(fallbackCode, { step: extras.step, cleanup: extras.cleanup, webUrl }),
       ctxExtras,
     );
   };
 
+  // 2. Probe on the same fd.
+  report('Reading the file’s length', { force: true });
+  const { estimatedDurationMs, hasVideo } = await probeMedia(handle, {
+    ext: file.ext, sizeBytes: file.sizeBytes, name: path.basename(file.filePath), parseStream, timeoutMs: probeTimeoutMs, signal,
+  });
+  if (signal?.aborted) return cancelled();
+  const estimatedMinutes = estimatedDurationMs !== undefined ? Math.round(estimatedDurationMs / 60000) : null;
+  if (estimatedDurationMs !== undefined && estimatedDurationMs > MAX_SESSION_MS) {
+    return toolError(
+      'session_too_long',
+      `The recording is about ${estimatedMinutes} minutes; one file can be at most 5 hours.`,
+      hintFor('session_too_long'),
+      { estimatedDurationMs },
+    );
+  }
+
   // 3. Budget pre-check — advisory; any failure (including a 401 from a
   //    proxy that predates key auth) is ignored and sync-api decides.
+  report('Checking your transcription allowance');
   let budget = null;
-  if (signal?.aborted) return cancelled();
   try {
     budget = await stt('GET', '/v1/file/budget', null, BUDGET_TIMEOUT_MS);
   } catch {
@@ -592,40 +825,44 @@ export async function transcribeFile({
       originDeviceId: WEB_UPLOAD_ORIGIN,
       localPresent: true,
     });
-    if (!up.assetId) throw new Error('upsert-asset returned no assetId');
-    assetId = up.assetId;
+    assetId = requireField(up, 'assetId', 'upsert-asset');
   } catch (err) {
     return fail(err, 'upload_failed', { step: 'upsert-asset' });
   }
 
   // 5. Multipart upload.
-  let uploadId;
   try {
     const mp = await syncApi('multipart-create', { assetId });
-    if (!mp.uploadId) throw new Error('multipart-create returned no uploadId');
-    uploadId = mp.uploadId;
+    uploadId = requireField(mp, 'uploadId', 'multipart-create');
   } catch (err) {
+    // If the response was lost, an upload may exist server-side that we have
+    // no uploadId for; sync-api's upload sweep aborts stale multiparts, so
+    // there is nothing to clean up here.
     return fail(err, 'upload_failed', { step: 'create' });
   }
+  report('Upload started');
 
-  const total = partCount(file.sizeBytes);
   // Deliberately not tied to the cancellation signal: it must go out after a cancel.
-  const abort = async () => {
-    try { await syncApi('multipart-abort', { assetId, uploadId }, null); } catch { /* best-effort */ }
+  const abortMultipart = async () => {
+    try {
+      await syncApi('multipart-abort', { assetId, uploadId }, null);
+      return 'aborted';
+    } catch {
+      return 'failed';
+    }
   };
 
-  let fh;
-  try {
-    fh = await fs.promises.open(file.filePath, 'r');
-  } catch (err) {
-    await abort();
-    return fail(err, 'upload_failed', { step: 'part 1' });
-  }
-
+  // The first terminal failure aborts every sibling's sign and PUT at once.
+  const uploadAbort = new AbortController();
+  const partScope = anySignal([signal, uploadAbort.signal]);
   const etags = new Array(total);
   let nextPart = 1;
-  let partsDone = 0;
   let failure = null;
+  const setFailure = (n, err) => {
+    if (failure) return; // keep the original error
+    failure = { n, err };
+    uploadAbort.abort();
+  };
 
   const readPart = async (n) => {
     const start = (n - 1) * PART_BYTES;
@@ -633,34 +870,56 @@ export async function transcribeFile({
     const buf = Buffer.alloc(length);
     let off = 0;
     while (off < length) {
-      const { bytesRead } = await fh.read(buf, off, length - off, start + off);
-      if (bytesRead === 0) throw new Error(`file shrank while reading part ${n}`);
+      const { bytesRead } = await handle.read(buf, off, length - off, start + off);
+      if (bytesRead === 0) throw Object.assign(new Error(`the file shrank while reading part ${n}`), { fileChanged: true });
       off += bytesRead;
     }
     return buf;
   };
 
-  const putPart = async (n, buf) => {
-    let lastErr;
-    for (let attempt = 0; attempt <= PART_RETRY_DELAYS_MS.length; attempt++) {
-      if (attempt > 0) await pause(PART_RETRY_DELAYS_MS[attempt - 1]);
-      if (signal?.aborted) throw new CancelledError();
-      if (failure) throw failure.err; // another part already failed — stop early
+  const putOnce = async (n, buf) => {
+    const signed = await syncApi('multipart-sign', { assetId, uploadId, partNumber: n }, partScope.signal);
+    const url = requireField(signed, 'url', 'multipart-sign');
+    if (partScope.signal.aborted) throw new CancelledError();
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), partTimeoutMs);
+    const combined = anySignal([timeout.signal, partScope.signal]);
+    try {
+      let res;
       try {
-        const signed = await syncApi('multipart-sign', { assetId, uploadId, partNumber: n });
-        if (!signed.url) throw new Error('multipart-sign returned no url');
-        const res = await fetchWithSignal(fetchImpl, signed.url, {
+        res = await raceAbort(fetchImpl(url, {
           method: 'PUT',
           headers: { 'Content-Length': String(buf.length) },
           body: buf,
-        }, partTimeoutMs, signal);
-        try { await res.arrayBuffer?.(); } catch { /* drain */ }
-        if (!res.ok) throw new Error(`part ${n} HTTP ${res.status}`);
-        const etag = (res.headers?.get?.('etag') ?? '').replace(/"/g, '');
-        if (!etag) throw new Error(`part ${n} missing etag`);
-        return etag;
+          redirect: 'error',
+          signal: combined.signal,
+        }), combined.signal);
       } catch (err) {
-        if (err instanceof CancelledError || signal?.aborted) throw new CancelledError();
+        if (partScope.signal.aborted) throw new CancelledError();
+        throw new TransportError(timeout.signal.aborted ? `part ${n} timed out after ${partTimeoutMs} ms` : `part ${n}: ${err?.message || err}`, { sent: true, cause: err });
+      }
+      // Take the ETag and drop the body unread: R2's reply carries nothing we
+      // need, and an unbounded read could outlive the timeout.
+      const etag = (res.headers?.get?.('etag') ?? '').replace(/"/g, '');
+      try { await res.body?.cancel?.(); } catch { /* ignore */ }
+      if (!res.ok) throw new Error(`part ${n} HTTP ${res.status}`);
+      if (!etag) throw new Error(`part ${n} missing etag`);
+      return etag;
+    } finally {
+      clearTimeout(timer);
+      combined.dispose();
+    }
+  };
+
+  const putPart = async (n, buf) => {
+    let lastErr;
+    for (let attempt = 0; attempt <= PART_RETRY_DELAYS_MS.length; attempt++) {
+      if (attempt > 0) await pauseOn(PART_RETRY_DELAYS_MS[attempt - 1], partScope.signal);
+      if (partScope.signal.aborted) throw new CancelledError();
+      try {
+        return await putOnce(n, buf);
+      } catch (err) {
+        if (err instanceof CancelledError || partScope.signal.aborted) throw new CancelledError();
         // A rejected key or scope won't get better by retrying.
         if (err instanceof HttpFailure && (err.status === 401 || err.status === 403)) throw err;
         lastErr = err;
@@ -672,17 +931,17 @@ export async function transcribeFile({
   const worker = async () => {
     while (!failure && nextPart <= total) {
       const n = nextPart++;
-      if (signal?.aborted) {
-        if (!failure) failure = { n, err: new CancelledError() };
+      if (partScope.signal.aborted) {
+        setFailure(n, new CancelledError());
         return;
       }
       try {
+        report(`Uploading part ${n} of ${total}`);
         const buf = await readPart(n);
         etags[n - 1] = await putPart(n, buf);
-        partsDone++;
-        try { await onProgress?.(partsDone, total); } catch { /* progress is best-effort */ }
+        report(`Uploaded part ${n} of ${total}`);
       } catch (err) {
-        if (!failure) failure = { n, err };
+        setFailure(n, err);
         return;
       }
     }
@@ -691,17 +950,40 @@ export async function transcribeFile({
   try {
     await Promise.all(Array.from({ length: Math.min(MAX_PARTS_IN_FLIGHT, total) }, worker));
   } finally {
-    try { await fh.close(); } catch { /* ignore */ }
+    partScope.dispose();
   }
   if (failure) {
-    await abort();
-    return fail(failure.err, 'upload_failed', { step: `part ${failure.n}` });
+    const cleanup = await abortMultipart();
+    if (failure.err?.fileChanged) {
+      return toolError('file_changed', failure.err.message, hintFor('file_changed'), { assetId, step: `part ${failure.n}`, cleanup });
+    }
+    return fail(failure.err, 'upload_failed', { step: `part ${failure.n}`, cleanup });
+  }
+
+  // The same bytes must still be there: an in-place rewrite changes size or
+  // mtime; a rename over the path changes the inode the path points at.
+  try { await beforeComplete?.(handle); } catch { /* test hook */ }
+  let changed = false;
+  try {
+    const st = await handle.stat();
+    changed = st.size !== file.stat.size || st.mtimeMs !== file.stat.mtimeMs;
+    if (!changed) {
+      const now2 = await fs.promises.stat(file.filePath).catch(() => null);
+      changed = !now2 || now2.ino !== file.stat.ino || now2.dev !== file.stat.dev;
+    }
+  } catch {
+    changed = true;
+  }
+  if (changed) {
+    const cleanup = await abortMultipart();
+    return toolError('file_changed', 'The file changed during the upload.', hintFor('file_changed'), { assetId, step: 'complete', cleanup });
   }
 
   if (signal?.aborted) {
-    await abort();
-    return cancelled('complete');
+    const cleanup = await abortMultipart();
+    return cancelled('complete', { cleanup });
   }
+  report('Finishing the upload');
   try {
     await syncApi('multipart-complete', {
       assetId,
@@ -709,37 +991,65 @@ export async function transcribeFile({
       parts: etags.map((etag, i) => ({ partNumber: i + 1, etag })),
     });
   } catch (err) {
-    await abort();
-    return fail(err, 'upload_failed', { step: 'complete' });
+    if (err instanceof HttpFailure) {
+      // A definite refusal: the object is not complete, so abort it.
+      const cleanup = await abortMultipart();
+      return fail(err, 'upload_failed', { step: 'complete', cleanup });
+    }
+    // Sent, but no usable answer (network drop, timeout, cancel, garbage):
+    // it may have completed. Aborting could destroy a finished upload, and a
+    // re-run would duplicate it — so say so and point at the asset.
+    return toolError(
+      'upload_unknown',
+      err instanceof CancelledError ? 'Cancelled while the upload was being finished.' : `multipart-complete: ${err?.message || err}`,
+      hintFor('upload_unknown', { webUrl: webUrlOf() }),
+      { assetId, webUrl: webUrlOf(), step: 'complete' },
+    );
   }
   uploadComplete = true;
 
   // 6. Start the job. A failure here leaves the asset in the library,
-  //    untranscribed (as on the web) — the error carries assetId.
-  const webUrl = `${cfg.webUrl}/r/${assetId}`;
+  //    untranscribed (as on the web) — the error carries assetId + webUrl.
+  const webUrl = webUrlOf();
   const jobBody = {
     assetId,
     ...(opts.language ? { language: opts.language } : {}),
     ...(estimatedDurationMs !== undefined ? { estimatedDurationMs } : {}),
     ...(opts.hotwords ? { options: { hotwords: opts.hotwords } } : {}),
   };
-  let job;
-  try {
+  let submitted = false; // a job POST has left this process
+  const outcomeUnknown = (err) => toolError(
+    'outcome_unknown',
+    err instanceof CancelledError ? 'Cancelled after the transcription request was sent.' : `/v1/file/jobs: ${err?.message || err}`,
+    hintFor('outcome_unknown'),
+    { assetId, webUrl },
+  );
+  const postJob = async () => {
     if (signal?.aborted) throw new CancelledError();
+    submitted = true;
+    const job = await stt('POST', '/v1/file/jobs', jobBody);
+    requireField(job, 'jobId', '/v1/file/jobs');
+    requireField(job, 'state', '/v1/file/jobs');
+    return job;
+  };
+  let job;
+  report('Starting transcription');
+  try {
     try {
-      job = await stt('POST', '/v1/file/jobs', jobBody);
+      job = await postJob();
     } catch (err) {
       // 409 not_synced: the completed object hadn't settled yet. Retry once;
-      // re-running the whole tool would upload a duplicate.
+      // re-running the whole tool would upload a duplicate. The first POST
+      // was definitively refused, so nothing is pending.
       if (mapHttpFailure(err)?.code !== 'upload_incomplete') throw err;
-      await pause(jobRetryDelayMs);
-      if (signal?.aborted) throw new CancelledError();
-      job = await stt('POST', '/v1/file/jobs', jobBody);
+      submitted = false;
+      await pauseOn(jobRetryDelayMs, signal);
+      job = await postJob();
     }
   } catch (err) {
-    const payload = fail(err, 'job_start_failed');
-    if (payload.error.code !== 'cancelled') payload.error.webUrl = webUrl;
-    return payload;
+    // No definite answer after the POST left: the job may exist.
+    if (submitted && !(err instanceof HttpFailure)) return outcomeUnknown(err);
+    return fail(err, 'job_start_failed');
   }
 
   // 7. What the next call needs.
@@ -748,8 +1058,8 @@ export async function transcribeFile({
   return {
     success: true,
     assetId,
-    jobId: job.jobId ?? null,
-    state: job.state ?? null,
+    jobId: job.jobId,
+    state: job.state,
     webUrl,
     estimatedMinutes,
     allowanceRemainingMinutes: availableMin !== null && estimatedMinutes !== null ? Math.max(0, availableMin - estimatedMinutes) : null,

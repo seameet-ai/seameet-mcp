@@ -76,7 +76,9 @@ The generic block, accepted by most MCP clients:
 Cloud mode never activates unless you provide `SEAMEET_API_KEY` or complete the device flow. On the first cloud tool call with no key, the agent shows a short code + `https://app.seameet.ai/link`; you open it (signed in), click **Authorize**, and a read+write key is minted and cached at `~/.seameet/credentials.json`. Silent thereafter; revoke any time under **API keys** on your account. To disconnect or switch accounts, call `seameet_logout` (or `rm ~/.seameet/credentials.json`).
 
 ### Transcribing large files
-`seameet_transcribe_file` uploads in 8 MB parts and reports progress after each part (`notifications/progress`), so hosts that reset their tool timeout on progress keep waiting. Hosts that don't may cut off a long upload: in Claude Code, raise the tool timeout for big files, e.g. `MCP_TOOL_TIMEOUT=600000 claude` (10 minutes). Transcription itself runs in the cloud after the tool returns, so only the upload counts.
+`seameet_transcribe_file` uploads in 8 MB parts and sends stage notifications (`notifications/progress`: reading the file, checking your allowance, each part starting and finishing, finishing the upload, starting transcription), at most one per second. Hosts that reset their tool timeout on progress keep waiting while parts move, but a stalled transfer sends nothing, and hosts that don't reset on progress may cut off a long upload either way: in Claude Code, raise the tool timeout for big files, e.g. `MCP_TOOL_TIMEOUT=600000 claude` (10 minutes). Transcription itself runs in the cloud after the tool returns, so only the upload counts.
+
+The file is opened once, before anything is sent, and every part is read from that open file. If it is rewritten, grows, or is replaced at its path during the upload, the upload is stopped with `file_changed` rather than sending a mix of old and new bytes. A recording whose header says it is longer than 5 hours is refused before anything is sent.
 
 ### Claude Desktop one-click bundle
 `manifest.json` is an [MCPB](https://github.com/anthropics/mcpb) bundle manifest, so the server ships as a one-click Claude Desktop extension:
@@ -172,15 +174,18 @@ Tool failures return structured JSON your agent can branch on:
 | `app_outdated` | App is running but too old — **update** to `requiredVersion` (don't reinstall the same build) |
 | `auth_required` | Cloud tool needs authorization — the payload has a `user_code` + the `/link` URL |
 | `insufficient_scope` | The API key is read-only — authorize a read+write key |
-| `unsupported_type` / `too_large` / `empty_file` | `seameet_transcribe_file` refused the file before uploading anything |
+| `unsupported_type` / `too_large` / `empty_file` | `seameet_transcribe_file` refused the file before uploading anything (a known length over 5 hours is `session_too_long`, also before uploading) |
+| `file_changed` | The file changed during the upload; the upload was stopped — call again once the file is finished being written |
 | `insufficient_allowance` / `free_exhausted` / `import_cap_reached` / `daily_import_limit` / `queue_full` / `session_too_long` | Not enough transcription allowance or room right now — the `hint` says what to tell the user |
 | `not_entitled` | This account can't transcribe files — check the plan at app.seameet.ai |
 | `disabled` | Transcription is turned off for this account — contact support |
-| `upload_failed` | The upload stopped; `step` says where (`upsert-asset`, `create`, `part <n>`, `complete`) and the partial upload is aborted (the asset entry may remain in your library) |
+| `upload_failed` | The upload stopped; `step` says where (`upsert-asset`, `create`, `part <n>`, `complete`) and the partial upload is aborted (the asset entry may remain in your library). `cleanup: "failed"` means the abort itself failed; SeaMeet clears stale partial uploads on its own |
+| `upload_unknown` | The upload was sent but its completion wasn't confirmed (network drop at `complete`) — open `webUrl` to check before uploading again |
 | `service_unavailable` | SeaMeet is briefly unavailable — retry in a minute. During the upload `step` says where it stopped; once the upload completed, the payload carries `webUrl` to start transcription there |
 | `job_start_failed` | The file is in the library (`assetId`, `webUrl`) but transcription could not start — open `webUrl` to start it; don't re-run the tool, which would upload a duplicate |
 | `upload_incomplete` | SeaMeet was still finishing the upload after one retry — open `webUrl` in a minute to start transcription |
-| `cancelled` | The host cancelled the call; the partial upload is aborted and no transcription starts |
+| `cancelled` | The host cancelled the call before the transcription request was sent; the partial upload is aborted and no transcription starts |
+| `outcome_unknown` | The transcription request was sent but no answer came back (cancel, timeout or network drop) — it may have started, so check `asset.transcriptionJob` with `seameet_get_recording` before doing anything else |
 | `app_not_ready` | App is starting up — retry in a few seconds |
 | `invalid_request` | A required parameter is missing/invalid — re-check the tool schema |
 | `path_forbidden` | `filePath` must be inside the SeaMeet save directory |

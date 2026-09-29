@@ -191,6 +191,26 @@ export function loadCloudKey(env = process.env) {
   return null;
 }
 
+/** The cached device-flow key only (ignores SEAMEET_API_KEY). */
+export function readCachedKey(env = process.env) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cloudCredentialPath(env), 'utf8'));
+    return typeof parsed?.apiKey === 'string' ? parsed.apiKey : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete the cached key only if it is still `usedKey`. Returns true when it
+ * deleted it. Never touches an env key.
+ */
+export function forgetCachedKeyIf(env, usedKey) {
+  if (typeof env.SEAMEET_API_KEY === 'string' && env.SEAMEET_API_KEY.startsWith('smk_')) return false;
+  if (!usedKey || readCachedKey(env) !== usedKey) return false;
+  try { fs.rmSync(cloudCredentialPath(env)); return true; } catch { return false; }
+}
+
 export function saveCloudKey(env, apiKey) {
   const file = cloudCredentialPath(env);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -760,20 +780,20 @@ export async function createServer(env = process.env) {
         // notifications/cancelled from the host aborts the upload: open
         // multipart uploads are aborted and the job is never started.
         signal: extra?.signal,
+        // Stage notifications (throttled to 1/s by upload.js, never awaited).
         onProgress: progressToken !== undefined && typeof extra?.sendNotification === 'function'
-          ? (progress, total) => extra.sendNotification({
+          ? (progress, total, message) => extra.sendNotification({
             method: 'notifications/progress',
-            params: { progressToken, progress, total, message: `Uploaded part ${progress} of ${total}` },
+            params: { progressToken, progress, total, ...(message ? { message } : {}) },
           })
           : undefined,
         onUnauthorized: () => {
-          // Same as the cloud path's revoked-key handling. An env key can't be
-          // deleted — the hint tells the user to replace it instead.
-          const envKey = typeof env.SEAMEET_API_KEY === 'string' && env.SEAMEET_API_KEY.startsWith('smk_');
-          if (!envKey) {
-            try { fs.rmSync(cloudCredentialPath(env)); } catch { /* ignore */ }
-          }
-          pendingDevice = null;
+          // Same as the cloud path's revoked-key handling, but only if the
+          // cache still holds the key THIS request used: a long upload can
+          // outlive a re-authorization, and an old 401 must not delete the
+          // new key (or cancel its device flow). An env key can't be deleted
+          // — the hint tells the user to replace it instead.
+          if (forgetCachedKeyIf(env, auth.key)) pendingDevice = null;
         },
       });
       return respond(payload, payload.success !== true);

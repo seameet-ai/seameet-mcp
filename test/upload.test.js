@@ -15,6 +15,7 @@
 
 import assert from 'node:assert';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,9 +26,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import {
   ALLOWED_EXTENSIONS, DEFAULT_SUPABASE_URL, DEFAULT_STT_PROXY_URL, DEFAULT_WEB_URL, DEFAULT_SUPABASE_ANON_KEY,
-  MAX_FILE_BYTES, MAX_PARTS_IN_FLIGHT, PART_BYTES, PART_PUT_BASE_TIMEOUT_MS, PART_PUT_TIMEOUT_MS, TRANSCRIBE_TOOL, anySignal, checkFile, cutCodePoints, partCount, pollAfterSeconds,
+  MAX_FILE_BYTES, MAX_JSON_BYTES, MAX_PARTS_IN_FLIGHT, PART_BYTES, PART_PUT_BASE_TIMEOUT_MS, PART_PUT_TIMEOUT_MS, TRANSCRIBE_TOOL, anySignal, checkFile, cutCodePoints, partCount, pollAfterSeconds,
   transcribeFile, uploadConfig,
 } from '../src/upload.js';
+import { forgetCachedKeyIf } from '../src/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(__dirname, '..', 'bin', 'seameet-mcp.js');
@@ -83,6 +85,8 @@ function mockFetch(routes = {}) {
   const calls = [];
   const state = { inflight: 0, maxInflight: 0, putAttempts: {} };
   const fetchImpl = async (url, init = {}) => {
+    state.redirects = state.redirects || [];
+    state.redirects.push(init.redirect);
     const u = new URL(url);
     const method = init.method || 'GET';
     const headers = init.headers || {};
@@ -130,12 +134,12 @@ function mockFetch(routes = {}) {
 const audioProbe = (duration = 600) => async () => ({ format: { duration, hasVideo: false } });
 const noSleep = () => { const sleeps = []; return { sleeps, sleep: async (ms) => { sleeps.push(ms); } }; };
 
-async function run(file, { routes, args = {}, env = ENV, parseFile = audioProbe(), onProgress, onUnauthorized, probeTimeoutMs, signal, partTimeoutMs } = {}) {
+async function run(file, { routes, args = {}, env = ENV, parseStream = audioProbe(), onProgress, onUnauthorized, probeTimeoutMs, signal, partTimeoutMs, now, beforeComplete, apiTimeoutMs } = {}) {
   const m = mockFetch(routes);
   const s = noSleep();
   const result = await transcribeFile({
     env, key: KEY, args: { path: file, ...args }, fetchImpl: m.fetchImpl, sleep: s.sleep,
-    parseFile, onProgress, onUnauthorized, probeTimeoutMs, signal, partTimeoutMs,
+    parseStream, onProgress, onUnauthorized, probeTimeoutMs, signal, partTimeoutMs, now, beforeComplete, apiTimeoutMs,
   });
   return { result, ...m, sleeps: s.sleeps };
 }
@@ -282,11 +286,34 @@ async function main() {
     assert.strictEqual(complete.result.error.step, 'complete');
     assert.ok(syncOps(complete.calls).includes('multipart-abort'));
   });
-  await test('progress: one notification per part, ending at total', async () => {
+  await test('progress: a stage notification per step and per part start/finish, increasing', async () => {
     const seen = [];
-    const { result } = await run(twenty, { onProgress: (p, t) => { seen.push([p, t]); } });
+    let t = 0;
+    const { result } = await run(twenty, { now: () => (t += 1000), onProgress: (p, total, msg) => { seen.push([p, total, msg]); } });
     assert.strictEqual(result.success, true);
-    assert.deepStrictEqual(seen, [[1, 3], [2, 3], [3, 3]]);
+    assert.strictEqual(seen.length, 5 + 2 * 3);
+    assert.deepStrictEqual(seen.map((x) => x[0]), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.ok(seen.every((x) => x[1] === 11));
+    const msgs = seen.map((x) => x[2]);
+    for (const m of ['Reading the file’s length', 'Checking your transcription allowance', 'Upload started', 'Uploading part 1 of 3', 'Uploaded part 3 of 3', 'Finishing the upload', 'Starting transcription']) {
+      assert.ok(msgs.includes(m), `missing "${m}" in ${msgs.join(' | ')}`);
+    }
+  });
+  await test('progress is throttled to one per second', async () => {
+    const seen = [];
+    let t = 0;
+    await run(twenty, { now: () => (t += 250), onProgress: (p) => { seen.push(p); } });
+    assert.ok(seen.length >= 2 && seen.length <= 4, `got ${seen.length}`);
+    for (let i = 1; i < seen.length; i++) assert.ok(seen[i] > seen[i - 1], 'progress increases');
+  });
+  await test('progress is never awaited: a hung or throwing onProgress blocks nothing', async () => {
+    let t = 0;
+    const hung = await run(twenty, { now: () => (t += 1000), onProgress: () => new Promise(() => {}) });
+    assert.strictEqual(hung.result.success, true);
+    const threw = await run(twenty, { now: () => (t += 1000), onProgress: () => { throw new Error('closed'); } });
+    assert.strictEqual(threw.result.success, true);
+    const rejected = await run(twenty, { now: () => (t += 1000), onProgress: () => Promise.reject(new Error('closed')) });
+    assert.strictEqual(rejected.result.success, true);
   });
 
   console.log('\nIdentity + probe:');
@@ -310,22 +337,24 @@ async function main() {
   });
   await test('hasVideo: mp4 with a picture → video; audio-only mp4 → audio; mov with a failed probe → video; mp3 never', async () => {
     const mp4 = tmpFile('screen.mp4', 100);
-    const v = await run(mp4, { parseFile: async () => ({ format: { duration: 30, hasVideo: true } }) });
+    const v = await run(mp4, { parseStream: async () => ({ format: { duration: 30, hasVideo: true } }) });
     let up = v.calls.find((c) => c.op === 'upsert-asset').body;
     assert.deepStrictEqual([up.kind, up.hasVideo], ['video', true]);
-    const a = await run(mp4, { parseFile: async () => ({ format: { duration: 30, hasVideo: false } }) });
+    const a = await run(mp4, { parseStream: async () => ({ format: { duration: 30, hasVideo: false } }) });
     up = a.calls.find((c) => c.op === 'upsert-asset').body;
     assert.deepStrictEqual([up.kind, up.hasVideo], ['audio', false]);
-    const mov = await run(tmpFile('phone.mov', 100), { parseFile: async () => { throw new Error('unparseable'); } });
+    const mov = await run(tmpFile('phone.mov', 100), { parseStream: async () => { throw new Error('unparseable'); } });
     up = mov.calls.find((c) => c.op === 'upsert-asset').body;
     assert.deepStrictEqual([up.kind, up.hasVideo], ['video', true]);
-    const mp3 = await run(tmpFile('talk.mp3', 100), { parseFile: async () => ({ format: { duration: 30, hasVideo: true } }) });
+    const mp3 = await run(tmpFile('talk.mp3', 100), { parseStream: async () => ({ format: { duration: 30, hasVideo: true } }) });
     assert.strictEqual(mp3.calls.find((c) => c.op === 'upsert-asset').body.hasVideo, false);
   });
   await test('probe is called with {duration:false, skipCovers:true}', async () => {
     let opts;
-    await run(small, { parseFile: async (_p, o) => { opts = o; return { format: { duration: 10 } }; } });
+    let info;
+    await run(small, { parseStream: async (_s, i, o) => { info = i; opts = o; return { format: { duration: 10 } }; } });
     assert.deepStrictEqual(opts, { duration: false, skipCovers: true });
+    assert.deepStrictEqual(info, { size: 1000, path: 'interview.m4a' });
   });
   await test('duration 0 / NaN / missing / probe timeout → estimatedDurationMs omitted, poll 60 s', async () => {
     const probes = [
@@ -334,8 +363,8 @@ async function main() {
       async () => ({ format: {} }),
       () => new Promise(() => {}), // never resolves → timeout
     ];
-    for (const parseFile of probes) {
-      const { result, calls } = await run(small, { parseFile, probeTimeoutMs: 20 });
+    for (const parseStream of probes) {
+      const { result, calls } = await run(small, { parseStream, probeTimeoutMs: 20 });
       assert.strictEqual(result.success, true);
       const job = calls.find((c) => c.route === 'POST /v1/file/jobs').body;
       assert.ok(!('estimatedDurationMs' in job), `estimate should be omitted: ${JSON.stringify(job)}`);
@@ -360,7 +389,7 @@ async function main() {
     assert.strictEqual(m.calls.find((c) => c.route === 'POST /v1/file/jobs').body.estimatedDurationMs, 1000);
   });
   await test('job body: assetId, language, estimate, options.hotwords', async () => {
-    const { calls } = await run(small, { args: { language: 'ja', hotwords: [' SeaMeet ', 'BytePlus', 'SeaMeet'] }, parseFile: audioProbe(90.4) });
+    const { calls } = await run(small, { args: { language: 'ja', hotwords: [' SeaMeet ', 'BytePlus', 'SeaMeet'] }, parseStream: audioProbe(90.4) });
     assert.deepStrictEqual(calls.find((c) => c.route === 'POST /v1/file/jobs').body, {
       assetId: ASSET_ID, language: 'ja', estimatedDurationMs: 90400, options: { hotwords: ['SeaMeet', 'BytePlus'] },
     });
@@ -378,7 +407,7 @@ async function main() {
   });
   await test('estimate > availableMs → insufficient_allowance with the hours left', async () => {
     const { result, calls } = await run(small, {
-      parseFile: audioProbe(2 * 3600),
+      parseStream: audioProbe(2 * 3600),
       routes: { 'GET /v1/file/budget': () => json(200, { availableMs: 1.5 * 3600000, dailyRemaining: 3, queueRemaining: 5 }) },
     });
     assert.strictEqual(result.error.code, 'insufficient_allowance');
@@ -459,11 +488,15 @@ async function main() {
       assert.strictEqual(result.error.webUrl, `https://web.test/r/${ASSET_ID}`);
       assert.ok(typeof result.error.hint === 'string' && result.error.hint.length > 10);
       assert.ok(!/\n/.test(result.error.hint));
+      // After a complete upload every hint points at the saved asset and
+      // never invites a re-run (which would upload a duplicate).
+      assert.ok(result.error.hint.includes(`https://web.test/r/${ASSET_ID}`), `${code}: ${result.error.hint}`);
+      assert.ok(!/(call|run) this tool|try again/i.test(result.error.hint), `${code}: ${result.error.hint}`);
     }
     const down = await run(small, { routes: { 'POST /v1/file/jobs': () => json(503, { error: 'auth_unavailable' }) } });
     assert.ok(down.result.error.hint.includes(`https://web.test/r/${ASSET_ID}`), 'a 503 names where the saved file is');
     const fe = await run(small, { routes: { 'POST /v1/file/jobs': () => json(403, { error: 'free_exhausted' }) } });
-    assert.strictEqual(fe.result.error.hint, 'Your free transcription hours are used up; upgrade at app.seameet.ai to keep transcribing.');
+    assert.strictEqual(fe.result.error.hint, `Your free transcription hours are used up; upgrade at app.seameet.ai, then open https://web.test/r/${ASSET_ID} to transcribe this file.`);
   });
   await test('413 from sync-api → too_large (storage quota gets its own sentence)', async () => {
     const size = await run(small, { routes: { 'op:multipart-create': () => json(413, { error: 'import_too_large' }) } });
@@ -537,10 +570,15 @@ async function main() {
     b.abort();
     assert.strictEqual(signal.aborted, true);
     dispose();
-    // Node 18.0–18.16 has no AbortSignal.any: exercise the hand-wired fallback.
+    // Nested composition (timeout → part scope → cancel) must propagate.
+    const cancel = new AbortController();
+    const scope = anySignal([cancel.signal, new AbortController().signal]);
+    const inner = anySignal([new AbortController().signal, scope.signal]);
+    cancel.abort();
+    assert.strictEqual(inner.signal.aborted, true, 'nested composite fired');
     const real = AbortSignal.any;
     try {
-      AbortSignal.any = undefined;
+      AbortSignal.any = undefined; // Node 18.0–18.16
       const c = new AbortController();
       const fb = anySignal([new AbortController().signal, c.signal]);
       assert.strictEqual(fb.signal.aborted, false);
@@ -591,7 +629,7 @@ async function main() {
     const m = mockFetch({ 'POST /v1/file/jobs': () => json(409, { error: 'not_synced' }) });
     const started = Date.now();
     const pending = transcribeFile({
-      env: ENV, key: KEY, args: { path: small }, fetchImpl: m.fetchImpl, parseFile: audioProbe(),
+      env: ENV, key: KEY, args: { path: small }, fetchImpl: m.fetchImpl, parseStream: audioProbe(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)), jobRetryDelayMs: 5000, signal: c.signal,
     });
     const poll = setInterval(() => {
@@ -604,9 +642,242 @@ async function main() {
     assert.ok(Date.now() - started < 2000, 'the 5 s retry wait ended on cancel');
   });
 
+  console.log('\nHardening (redirects, bodies, file identity, outcomes):');
+  await test('every request refuses redirects (redirect: "error")', async () => {
+    const { result, state } = await run(twenty);
+    assert.strictEqual(result.success, true);
+    assert.ok(state.redirects.length > 5);
+    assert.ok(state.redirects.every((r) => r === 'error'), JSON.stringify(state.redirects));
+  });
+  await test('a real 3xx from sync-api is not followed and the key never leaves', async () => {
+    const hits = [];
+    const srv = http.createServer((req, res) => {
+      hits.push({ url: req.url, key: req.headers['x-api-key'] });
+      req.resume();
+      if (req.url === '/functions/v1/sync-api') { res.writeHead(307, { Location: '/steal' }); return res.end(); }
+      if (req.url.startsWith('/stt/')) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    try {
+      const base = `http://127.0.0.1:${srv.address().port}`;
+      const result = await transcribeFile({
+        env: { ...ENV, SEAMEET_SUPABASE_URL: base, SEAMEET_STT_PROXY_URL: `${base}/stt` },
+        key: KEY, args: { path: small }, parseStream: audioProbe(), sleep: async () => {},
+      });
+      assert.strictEqual(result.error.code, 'upload_failed');
+      assert.strictEqual(result.error.step, 'upsert-asset');
+      assert.ok(!hits.some((h) => h.url === '/steal'), 'redirect was not followed');
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  });
+  await test('PUT response bodies are cancelled unread; the ETag is still taken', async () => {
+    let cancelled = 0;
+    let pulled = 0;
+    const { result } = await run(small, {
+      routes: {
+        PUT: ({ partNumber }) => new Response(new ReadableStream({
+          pull(c) { pulled++; c.enqueue(new Uint8Array(1024)); },
+          cancel() { cancelled++; },
+        }), { status: 200, headers: { etag: `"e${partNumber}"` } }),
+      },
+    });
+    assert.strictEqual(result.success, true, JSON.stringify(result));
+    assert.strictEqual(cancelled, 1);
+    assert.ok(pulled <= 2, `body was drained (${pulled} pulls)`);
+  });
+  await test('JSON bodies are capped at 1 MiB', async () => {
+    const big = JSON.stringify({ assetId: ASSET_ID, pad: 'x'.repeat(MAX_JSON_BYTES) });
+    const { result } = await run(small, { routes: { 'op:upsert-asset': () => new Response(big, { status: 200 }) } });
+    assert.strictEqual(result.error.code, 'upload_failed');
+    assert.strictEqual(result.error.step, 'upsert-asset');
+    assert.ok(/larger than/.test(result.error.message), result.error.message);
+  });
+  await test('a JSON body that never ends is bounded by the request timeout', async () => {
+    const started = Date.now();
+    const { result } = await run(small, {
+      apiTimeoutMs: 50,
+      routes: { 'op:upsert-asset': () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"assetId":')); } }), { status: 200 }) },
+    });
+    assert.strictEqual(result.error.code, 'upload_failed');
+    assert.strictEqual(result.error.step, 'upsert-asset');
+    assert.ok(/timed out/.test(result.error.message), result.error.message);
+    assert.ok(Date.now() - started < 2000);
+  });
+  await test('2xx with an unparsable body or a missing field is an error at every step', async () => {
+    const garbage = () => new Response('not json', { status: 200 });
+    const cases = [
+      ['upsert-asset', { 'op:upsert-asset': garbage }],
+      ['upsert-asset', { 'op:upsert-asset': () => json(200, { ok: true }) }],
+      ['create', { 'op:multipart-create': garbage }],
+      ['create', { 'op:multipart-create': () => json(200, {}) }],
+      ['part 1', { 'op:multipart-sign': () => json(200, { partNumber: 1 }) }],
+    ];
+    for (const [step, routes] of cases) {
+      const { result, calls } = await run(small, { routes });
+      assert.strictEqual(result.error.code, 'upload_failed', step);
+      assert.strictEqual(result.error.step, step);
+      assert.ok(!calls.some((c) => c.route === 'POST /v1/file/jobs'), step);
+    }
+    // The job POST: a 2xx without jobId/state means it may exist → outcome_unknown.
+    for (const body of [{ state: 'queued' }, { jobId: 'j' }]) {
+      const { result } = await run(small, { routes: { 'POST /v1/file/jobs': () => json(202, body) } });
+      assert.strictEqual(result.error.code, 'outcome_unknown', JSON.stringify(body));
+    }
+  });
+  await test('a network error or cancel after the job POST was sent → outcome_unknown, never "cancelled"', async () => {
+    const hint = 'Transcription may have started; check asset.transcriptionJob with seameet_get_recording before doing anything else.';
+    const net = await run(small, { routes: { 'POST /v1/file/jobs': () => Promise.reject(new TypeError('fetch failed')) } });
+    assert.strictEqual(net.result.error.code, 'outcome_unknown');
+    assert.strictEqual(net.result.error.hint, hint);
+    assert.strictEqual(net.result.assetId, ASSET_ID);
+    assert.strictEqual(net.result.error.webUrl, `https://web.test/r/${ASSET_ID}`);
+    const c = new AbortController();
+    const cancelledAfterSend = await run(small, {
+      signal: c.signal,
+      routes: { 'POST /v1/file/jobs': () => { setTimeout(() => c.abort(), 5); return new Promise(() => {}); } },
+    });
+    // The mock ignores fetch's signal, like a request already on the wire.
+    assert.strictEqual(cancelledAfterSend.result.error.code, 'outcome_unknown');
+    assert.strictEqual(cancelledAfterSend.result.error.hint, hint);
+  });
+  await test('a failing worker aborts its siblings at once (does not wait for a slow part)', async () => {
+    const started = Date.now();
+    let part2Aborted = false;
+    let part2Started;
+    const part2InFlight = new Promise((r) => { part2Started = r; });
+    const { result } = await run(twenty, {
+      routes: {
+        PUT: ({ partNumber, signal }) => {
+          // Part 1 fails for good only once part 2's PUT is on the wire.
+          if (partNumber === 1) return part2InFlight.then(() => Promise.reject(new TypeError('fetch failed')));
+          if (partNumber === 2) part2Started();
+          return new Promise((resolve, reject) => {
+            const t = setTimeout(() => resolve(new Response(null, { status: 200, headers: { etag: `"e${partNumber}"` } })), 5000);
+            signal.addEventListener('abort', () => { part2Aborted = true; clearTimeout(t); reject(new DOMException('aborted', 'AbortError')); });
+          });
+        },
+      },
+    });
+    assert.strictEqual(result.error.code, 'upload_failed');
+    assert.strictEqual(result.error.step, 'part 1', 'keeps the original error');
+    assert.ok(part2Aborted, 'the slow sibling was aborted');
+    assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+  });
+  await test('multipart-create with a lost response → upload_failed step create, nothing to abort', async () => {
+    const { result, calls } = await run(small, { routes: { 'op:multipart-create': () => Promise.reject(new TypeError('socket hang up')) } });
+    assert.strictEqual(result.error.code, 'upload_failed');
+    assert.strictEqual(result.error.step, 'create');
+    assert.ok(!syncOps(calls).includes('multipart-abort'));
+  });
+  await test('multipart-complete with an unknown outcome → upload_unknown, no abort, points at webUrl', async () => {
+    for (const h of [() => Promise.reject(new TypeError('socket hang up')), () => new Response('garbage', { status: 200 })]) {
+      const { result, calls } = await run(small, { routes: { 'op:multipart-complete': h } });
+      assert.strictEqual(result.error.code, 'upload_unknown');
+      assert.strictEqual(result.error.hint, `The upload may have finished; open https://web.test/r/${ASSET_ID} to check before uploading again.`);
+      assert.strictEqual(result.error.webUrl, `https://web.test/r/${ASSET_ID}`);
+      assert.ok(!syncOps(calls).includes('multipart-abort'), 'a maybe-finished upload is never aborted');
+      assert.ok(!calls.some((c) => c.route === 'POST /v1/file/jobs'));
+    }
+  });
+  await test('a failed multipart-abort is reported as cleanup: "failed"', async () => {
+    const { result } = await run(small, {
+      routes: { PUT: () => new Response('no', { status: 500 }), 'op:multipart-abort': () => json(500, { error: 'internal' }) },
+    });
+    assert.strictEqual(result.error.code, 'upload_failed');
+    assert.strictEqual(result.error.cleanup, 'failed');
+    assert.ok(/cleanup failed/.test(result.error.hint), result.error.hint);
+    const ok = await run(small, { routes: { PUT: () => new Response('no', { status: 500 }) } });
+    assert.strictEqual(ok.result.error.cleanup, 'aborted');
+  });
+  await test('the file growing mid-upload → file_changed, upload aborted', async () => {
+    const file = tmpFile('grow.wav', 3 * MiB);
+    const { result, calls } = await run(file, { beforeComplete: async () => { fs.appendFileSync(file, Buffer.alloc(10)); } });
+    assert.strictEqual(result.error.code, 'file_changed');
+    assert.ok(syncOps(calls).includes('multipart-abort'));
+    assert.ok(!syncOps(calls).includes('multipart-complete'));
+  });
+  await test('the path swapped for another file mid-upload → file_changed', async () => {
+    const file = tmpFile('swap.wav', 3 * MiB);
+    const other = tmpFile('other.wav', 3 * MiB);
+    const { result } = await run(file, { beforeComplete: async () => { fs.renameSync(other, file); } });
+    assert.strictEqual(result.error.code, 'file_changed');
+  });
+  await test('every part is read from the fd opened before the first request', async () => {
+    // Replace the path's file after validation: the bytes uploaded must be the original's.
+    const file = path.join(tmpDir, 'fd.wav');
+    fs.writeFileSync(file, Buffer.alloc(1000, 0x41));
+    let seen;
+    const m = mockFetch({ PUT: () => new Response(null, { status: 200, headers: { etag: '"e"' } }) });
+    const origFetch = m.fetchImpl;
+    const fetchImpl = async (url, init) => {
+      if (init?.method === 'PUT') seen = Buffer.from(init.body).toString('latin1');
+      return origFetch(url, init);
+    };
+    const result = await transcribeFile({
+      env: ENV, key: KEY, args: { path: file }, fetchImpl, sleep: async () => {},
+      parseStream: async () => { fs.rmSync(file); fs.writeFileSync(file, Buffer.alloc(1000, 0x42)); return { format: {} }; },
+    });
+    assert.strictEqual(seen, 'A'.repeat(1000), 'uploaded the file that was validated');
+    assert.strictEqual(result.error?.code, 'file_changed', 'and noticed the path now names another file');
+  });
+  if (process.platform !== 'win32') {
+    await test('a FIFO is refused without blocking', async () => {
+      const fifo = path.join(tmpDir, 'pipe.wav');
+      execFileSync('mkfifo', [fifo]);
+      const { result, calls } = await run(fifo);
+      assert.strictEqual(result.error.code, 'invalid_request');
+      assert.strictEqual(calls.length, 0);
+    });
+  }
+  await test('a timed-out probe destroys its input stream', async () => {
+    let stream;
+    const { result } = await run(small, { probeTimeoutMs: 20, parseStream: (s) => { stream = s; return new Promise(() => {}); } });
+    assert.strictEqual(result.success, true);
+    assert.ok(stream.destroyed, 'probe stream destroyed');
+  });
+  await test('cancelling during the probe destroys the stream and returns cancelled', async () => {
+    let stream;
+    const c = new AbortController();
+    const { result, calls } = await run(small, { signal: c.signal, parseStream: (s) => { stream = s; setTimeout(() => c.abort(), 5); return new Promise(() => {}); } });
+    assert.strictEqual(result.error.code, 'cancelled');
+    assert.ok(stream.destroyed);
+    assert.strictEqual(calls.length, 0);
+  });
+  await test('a known duration over 5 hours → session_too_long before any network call', async () => {
+    const { result, calls } = await run(small, { parseStream: audioProbe(5 * 3600 + 1) });
+    assert.strictEqual(result.error.code, 'session_too_long');
+    assert.strictEqual(calls.length, 0);
+    const ok = await run(small, { parseStream: audioProbe(5 * 3600) });
+    assert.strictEqual(ok.result.success, true);
+  });
+  await test('the path is not trimmed: "x.wav " does not resolve to "x.wav"', async () => {
+    const file = tmpFile('x.wav', 100);
+    const { result, calls } = await run(`${file} `);
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error.code, 'invalid_request');
+    assert.ok(result.error.message.includes(`${file} `), result.error.message);
+    assert.strictEqual(calls.length, 0);
+    assert.strictEqual((await run('   ')).result.error.code, 'invalid_request');
+  });
+
+  await test('forgetCachedKeyIf deletes only the key the request used, never with an env key', async () => {
+    const file = path.join(tmpDir, 'forget.json');
+    const env = { SEAMEET_CLOUD_CREDENTIALS_FILE: file };
+    fs.writeFileSync(file, JSON.stringify({ apiKey: 'smk_new' }));
+    assert.strictEqual(forgetCachedKeyIf(env, 'smk_old'), false);
+    assert.ok(fs.existsSync(file));
+    assert.strictEqual(forgetCachedKeyIf({ ...env, SEAMEET_API_KEY: 'smk_env' }, 'smk_new'), false);
+    assert.ok(fs.existsSync(file));
+    assert.strictEqual(forgetCachedKeyIf(env, 'smk_new'), true);
+    assert.ok(!fs.existsSync(file));
+  });
+
   console.log('\nReturn shape:');
   await test('success: assetId, jobId, state, webUrl, minutes, allowance, poll, next', async () => {
-    const { result } = await run(small, { parseFile: audioProbe(1200) });
+    const { result } = await run(small, { parseStream: audioProbe(1200) });
     assert.deepStrictEqual(Object.keys(result).sort(), ['allowanceRemainingMinutes', 'assetId', 'estimatedMinutes', 'jobId', 'next', 'pollAfterSeconds', 'state', 'success', 'webUrl'].sort());
     assert.strictEqual(result.webUrl, `https://web.test/r/${ASSET_ID}`);
     assert.strictEqual(result.jobId, 'job-1');
@@ -670,7 +941,7 @@ async function main() {
       const names = (await client.listTools()).tools.map((t) => t.name);
       assert.ok(names.includes('seameet_transcribe_file'));
     });
-    await test('call uploads 20 MiB and sends one progress notification per part', async () => {
+    await test('call uploads 20 MiB and sends throttled, increasing progress', async () => {
       const progress = [];
       const res = await client.callTool(
         { name: 'seameet_transcribe_file', arguments: { path: twenty } },
@@ -681,7 +952,9 @@ async function main() {
       const body = JSON.parse(res.content[0].text);
       assert.strictEqual(body.assetId, ASSET_ID);
       assert.strictEqual(body.jobId, 'job-int');
-      assert.deepStrictEqual(progress, [[1, 3], [2, 3], [3, 3]]);
+      assert.ok(progress.length >= 1, 'at least one stage notification');
+      assert.ok(progress.every(([, total]) => total === 11));
+      for (let i = 1; i < progress.length; i++) assert.ok(progress[i][0] > progress[i - 1][0]);
       assert.strictEqual(fake.state.putLengths.reduce((a, b) => a + b, 0), 20 * MiB);
       assert.ok(fake.state.putHadLength.every(Boolean), 'every PUT carried Content-Length');
       assert.strictEqual(fake.state.lastSyncHeaders['x-api-key'], KEY);
@@ -713,6 +986,17 @@ async function main() {
       assert.ok(!fake.state.ops.includes('multipart-complete'));
       await new Promise((r) => setTimeout(r, 100));
       assert.strictEqual(fake.state.jobs, jobsBefore, 'no /v1/file/jobs after a cancel');
+    });
+    await test('a 401 for an old key does not delete a newer key saved meanwhile', async () => {
+      const newer = 'smk_' + 'b'.repeat(40);
+      fake.state.rewriteKey = { file: credFile, key: newer };
+      fake.state.reject = true;
+      const res = await client.callTool({ name: 'seameet_transcribe_file', arguments: { path: small } });
+      fake.state.reject = false;
+      fake.state.rewriteKey = null;
+      assert.strictEqual(JSON.parse(res.content[0].text).error.code, 'auth_required');
+      assert.strictEqual(JSON.parse(fs.readFileSync(credFile, 'utf8')).apiKey, newer, 'newer key kept');
+      fs.writeFileSync(credFile, JSON.stringify({ apiKey: KEY })); // restore for the next test
     });
     await test('a revoked cached key → auth_required and the cached key file is deleted', async () => {
       fake.state.reject = true;
@@ -756,6 +1040,8 @@ function startFakeBackend() {
       const port = server.address().port;
       if (req.url === '/functions/v1/sync-api') {
         state.lastSyncHeaders = req.headers;
+        // Simulate a re-authorization landing while this request is in flight.
+        if (state.rewriteKey) fs.writeFileSync(state.rewriteKey.file, JSON.stringify({ apiKey: state.rewriteKey.key }));
         if (state.reject) return send(401, { error: 'unauthorized' });
         const body = JSON.parse(raw.toString('utf8'));
         state.ops.push(body.op);
@@ -790,8 +1076,15 @@ async function connectClient(env) {
   return client;
 }
 
+// A hung await would otherwise let the event loop drain and exit 0 silently.
+let finished = false;
+process.on('beforeExit', () => {
+  if (!finished) { console.error('upload.test.js: event loop drained before the suite finished (a test hung)'); process.exit(1); }
+});
+
 main()
   .then(() => {
+    finished = true;
     fs.rmSync(tmpDir, { recursive: true, force: true });
     console.log(`\n${passed} passed, ${failed} failed`);
     if (failed > 0) process.exit(1);
