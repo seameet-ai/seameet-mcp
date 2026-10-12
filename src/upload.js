@@ -12,7 +12,9 @@
  *   5. sync-api multipart-create → multipart-sign + PUT per 8 MiB part → multipart-complete
  *   6. POST stt-proxy /v1/file/jobs
  *
- * Every call carries the user's API key (`X-Api-Key`). The `web-upload`
+ * Every call to sync-api and stt-proxy carries the user's API key
+ * (`X-Api-Key`) and `User-Agent: seameet-mcp/<version>`; the presigned part
+ * PUTs go straight to storage and carry neither. The `web-upload`
  * originDeviceId and `web-upload-` clientRef prefix are load-bearing: every
  * server-side import guard (size, in-flight reservation, sweep, entitlement)
  * keys on them, so they must never change.
@@ -25,6 +27,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+
+import { USER_AGENT } from './version.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -586,6 +590,7 @@ function makeClients(cfg, key, fetchImpl, defaultSignal, apiTimeoutMs = API_TIME
         apikey: cfg.anonKey,
         'X-Api-Key': key,
         'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
       },
       body: JSON.stringify({ ...args, op }),
     }, apiTimeoutMs, signal);
@@ -596,7 +601,7 @@ function makeClients(cfg, key, fetchImpl, defaultSignal, apiTimeoutMs = API_TIME
   async function stt(method, route, body, timeoutMs = apiTimeoutMs) {
     const r = await httpJson(fetchImpl, `${cfg.sttProxyUrl}${route}`, {
       method,
-      headers: { 'X-Api-Key': key, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { 'X-Api-Key': key, 'User-Agent': USER_AGENT, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     }, timeoutMs, defaultSignal);
     if (r.status < 200 || r.status >= 300) throw new HttpFailure(r.status, r.body, 'stt-proxy');

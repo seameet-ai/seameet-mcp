@@ -40,6 +40,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { TRANSCRIBE_TOOL, transcribeFile } from './upload.js';
+import { PACKAGE_VERSION, USER_AGENT } from './version.js';
 
 export { TRANSCRIBE_TOOL };
 
@@ -68,15 +69,7 @@ const INSTALL_HINT =
 const DEFAULT_REMOTE_URL = 'https://seameet-mcp-remote.seameet.workers.dev/mcp';
 const DEFAULT_DEVICE_URL = 'https://tvezjojyndcgkneyxook.supabase.co/functions/v1/mcp-device';
 
-// Reported in the MCP initialize handshake; read from package.json (shipped in
-// both the npm package and the .mcpb bundle) so it can't drift.
-export const PACKAGE_VERSION = (() => {
-  try {
-    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-})();
+export { PACKAGE_VERSION, USER_AGENT };
 
 // ---------------------------------------------------------------------------
 // Desktop-bridge credentials discovery
@@ -229,7 +222,7 @@ async function postJson(url, headers, body, timeoutMs = CLOUD_TIMEOUT_MS) {
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT, ...headers },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
