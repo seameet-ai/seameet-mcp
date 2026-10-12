@@ -4,6 +4,28 @@ All notable changes to `@seameet/mcp`. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this package uses [SemVer](https://semver.org/)
 (pre-1.0, so minor versions may include small breaking changes — called out below).
 
+## [Unreleased]
+
+### Added
+- **Docs: the hosted SeaMeet connector.** Claude and ChatGPT users can now add
+  `https://mcp.seameet.ai/mcp` as a connector and sign in with their SeaMeet
+  account: no install, no API key. The README and INSTALL.md cover adding it to
+  Claude (web, desktop), ChatGPT (web, desktop) and Claude Code, list its 15
+  tools, and explain when to use it instead of this package.
+- Cloud mode relays the new hosted tools as soon as the server offers them (the
+  tool set is fetched live, so no update is needed): search your recordings and
+  the ones shared with you (`seameet_search_recordings`), search and read
+  Meeting Memory (`seameet_search_memory`, `seameet_get_memory_page`), catch up
+  across related recordings (`seameet_whats_changed`), rename speakers and
+  regenerate a summary.
+
+### Changed
+- Every request to SeaMeet's cloud (the hosted MCP server, the device
+  authorization flow, and the sync and transcription APIs used by
+  `seameet_transcribe_file`) now sends `User-Agent: seameet-mcp/<version>`, so
+  SeaMeet can tell this package's traffic apart from other clients. Uploads of
+  file parts go straight to storage and are unchanged.
+
 ## [0.3.0] - 2026-09-29
 
 > **Release gate:** publish 0.3.0 only after stt-proxy API-key auth

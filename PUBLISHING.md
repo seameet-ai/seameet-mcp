@@ -20,6 +20,12 @@ API key. Do **not** tag `v0.3.0` until stt-proxy API-key auth on `/v1/file/jobs`
 stt-proxy, every upload succeeds but the job start is refused, so the file lands in the library
 untranscribed (`job_start_failed`). Check with a small file against PROD before tagging.
 
+## ⚠️ Before publishing `server.json` with `remotes`
+
+`server.json` lists the hosted connector `https://mcp.seameet.ai/mcp` under `remotes`. Run
+`mcp-publisher publish` only once remote MCP OAuth (seasalt-ai/seameet-app-desktop#884) is live on
+PROD, so registry users who pick the remote can sign in.
+
 ## 1. npm release (automated)
 
 1. Bump `package.json` version (SemVer; pre-1.0, so minor may carry small breaking changes — note them in `CHANGELOG.md`).

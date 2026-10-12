@@ -5,6 +5,10 @@ agents record and read your SeaMeet meetings. It's a single stdio command —
 `npx -y @seameet/mcp` — that every MCP-capable tool can launch. This page has the exact recipe
 for each tool.
 
+> **Using Claude or ChatGPT in a chat app?** Skip the install: add the hosted connector
+> `https://mcp.seameet.ai/mcp` and sign in. See
+> [No install: the hosted connector](#no-install-the-hosted-connector).
+
 ---
 
 ## Fastest path — let your agent install it
@@ -41,6 +45,7 @@ Nothing else to copy.
 | [OpenCode](#opencode) | edit config | `opencode.json` |
 | [GitHub Copilot CLI](#github-copilot-cli) | `copilot mcp add seameet -- npx -y @seameet/mcp` | `~/.copilot/mcp-config.json` |
 | [Anything else](#generic-any-mcp-client) | generic `mcpServers` block | — |
+| [Claude / ChatGPT apps (hosted)](#no-install-the-hosted-connector) | add the URL `https://mcp.seameet.ai/mcp` | — |
 
 **Requirements:** Node.js ≥ 18. The SeaMeet desktop app (running) unlocks the full recorder tool
 set; without it you still get cloud tools once you authorize. See the [README](README.md) for the
@@ -224,6 +229,43 @@ Most MCP clients accept the standard `mcpServers` object. Add a `seameet` stdio 
 If your client uses a different key or shape, the invariant is always the same: run the command
 **`npx`** with args **`-y @seameet/mcp`** as a **local/stdio** server. Consult your client's MCP docs
 for where its config lives.
+
+---
+
+## No install: the hosted connector
+
+SeaMeet hosts an MCP server at **`https://mcp.seameet.ai/mcp`** that you sign in to with your
+SeaMeet account (OAuth). Nothing to install and no API key. It serves your **cloud library** only
+(15 tools: recordings, transcripts, search, Meeting Memory, webhooks); for the desktop recorder
+tools or to transcribe a file on this computer, use `npx -y @seameet/mcp` above. Any verified
+SeaMeet account works, Free included; Sync Pro unlocks full search snippets, full Meeting Memory
+pages, and webhooks.
+
+- **Claude on the web:** open <https://claude.ai/new#customize/connectors/yours> (or **Settings →
+  Connectors**) → **Add custom connector** → name `SeaMeet`, URL `https://mcp.seameet.ai/mcp` →
+  **Add** → **Connect** → sign in on app.seameet.ai → **Allow**. Connectors added on claude.ai
+  also appear in the Claude desktop and mobile apps.
+- **Claude desktop app:** **Settings → Connectors → Add custom connector**, same URL, same sign-in.
+- **ChatGPT on the web:** open <https://chatgpt.com/plugins> → add an MCP server with the URL →
+  **Authenticate** → sign in → **Allow**.
+- **ChatGPT desktop app:** **Plugins → MCP** → add a server, transport **Streamable HTTP**, the URL
+  above, leave the token/header fields empty → **Authenticate** (no restart needed). Your browser
+  opens app.seameet.ai/connect → sign in → **Allow**. The consent page warns that SeaMeet
+  "doesn't recognize this app's address" because the desktop app receives the sign-in on a local
+  `127.0.0.1` address — that's expected.
+- **Claude Code:** this should work, though it isn't verified end to end yet:
+
+  ```bash
+  claude mcp add --transport http seameet https://mcp.seameet.ai/mcp
+  ```
+
+  then run `/mcp` to sign in.
+
+The connector requests read + write access. To disconnect, remove it in the app and revoke its key
+(`Connector: <app>`) under **API keys** at <https://app.seameet.ai/account>.
+
+> **Agent reading this:** if you are a chat app (claude.ai, ChatGPT) rather than a coding agent with
+> a config file, you can't add the connector yourself — give the user the steps above for their app.
 
 ---
 

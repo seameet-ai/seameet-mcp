@@ -9,6 +9,8 @@ It picks the richest available backend automatically and exposes the union of bo
 
 `tools/list` returns the superset of whatever's available; call **`seameet_status`** any time to see the current mode(s).
 
+> **Using Claude or ChatGPT in a chat app?** You don't need this package. Add the **hosted SeaMeet connector** — `https://mcp.seameet.ai/mcp` — and sign in with your SeaMeet account. No install, no API key. See [Hosted connector](#hosted-connector-no-install).
+
 ## What you can do
 
 **🎙️ Record & capture** *(desktop mode)*
@@ -28,13 +30,65 @@ It picks the richest available backend automatically and exposes the union of bo
 - List recent synced recordings, including files you transcribed on [app.seameet.ai](https://app.seameet.ai/transcribe) — `seameet_list_recent_recordings` · fetch the summary, the speaker-labeled transcript (paged for long recordings) and chapters, plus action items and key decisions for desktop recordings — `seameet_get_recording`
 - **Transcribe a file from this computer** — upload a local audio or video file (mp3, m4a, mp4, mov, wav, flac, ogg, oga, opus, webm, aac, amr, spx; up to 512 MB and 5 hours) and start a speaker-labeled transcription; it returns an `assetId` right away and tells the agent when to poll `seameet_get_recording` — `seameet_transcribe_file` *(runs in this local client, so it works in Claude Code, Codex, Cursor and Claude Desktop, but not from claude.ai on the web; uses your transcription allowance)*
 - Get a temporary media **stream/download URL** — `seameet_get_media_url`
-- Check storage usage — `seameet_get_usage`
-- Manage outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`) — `seameet_create_webhook` · `seameet_list_webhooks` · `seameet_update_webhook` · `seameet_delete_webhook`
+- **Search** your recordings and the ones shared with you — `seameet_search_recordings` *(full snippets need Sync Pro)*
+- **Meeting Memory** — find people, organizations and topics — `seameet_search_memory` · read a Memory page with the meetings it cites — `seameet_get_memory_page`
+- **Catch up** across 2–5 related recordings, oldest first, with citations — `seameet_whats_changed`
+- Rename speakers — `seameet_rename_speakers` · regenerate a recording's summary — `seameet_regenerate_recording_summary`
+- Check storage usage — `seameet_get_usage` · how to record with the desktop app — `seameet_desktop_recording_help`
+- Manage outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`; creating one needs Sync Pro) — `seameet_create_webhook` · `seameet_list_webhooks` · `seameet_update_webhook` · `seameet_delete_webhook`
 
 **🔌 Connection** *(any mode)*
 - Which modes are connected — `seameet_status` · disconnect cloud / switch accounts — `seameet_logout`
 
-That's **17 desktop tools + 8 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
+That's **17 desktop tools + 15 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
+
+## Hosted connector (no install)
+
+SeaMeet also runs a hosted MCP server at **`https://mcp.seameet.ai/mcp`**. Add it to Claude or ChatGPT as a connector and sign in with your SeaMeet account (OAuth): no Node.js, no `npx`, no API key to copy. Any verified SeaMeet account works, Free included; Sync Pro unlocks full search snippets, full Meeting Memory pages, and webhooks.
+
+**Which one should I use?**
+
+| | Hosted connector | `@seameet/mcp` (this package) |
+|---|---|---|
+| Install | none, add a URL | `npx -y @seameet/mcp` |
+| Works in | Claude (web, desktop, mobile), ChatGPT (web, desktop), Claude Code, any client that speaks remote MCP with OAuth | Claude Code, Claude Desktop, Codex, Cursor, Antigravity, OpenCode, Copilot CLI, any stdio MCP client |
+| Your cloud library (recordings, transcripts, search, Memory, webhooks) | ✓ 15 tools | ✓ the same 15, relayed |
+| Record, screenshot, live transcript from the desktop app | — | ✓ 17 desktop tools |
+| Transcribe a file on this computer | — | ✓ `seameet_transcribe_file` |
+
+In short: chat apps and cloud-only use → the hosted connector. A coding agent on the same machine as the SeaMeet desktop app, or uploading local files → this package.
+
+**Add it:**
+
+- **Claude on the web** — open [claude.ai/new#customize/connectors/yours](https://claude.ai/new#customize/connectors/yours) (or **Settings → Connectors**) → **Add custom connector** → name `SeaMeet`, URL `https://mcp.seameet.ai/mcp` → **Add** → **Connect** → sign in on app.seameet.ai → **Allow**. A connector added on claude.ai also shows up in the Claude desktop and mobile apps.
+- **Claude desktop app** — **Settings → Connectors → Add custom connector**, same URL, same sign-in.
+- **ChatGPT on the web** — open [chatgpt.com/plugins](https://chatgpt.com/plugins) → add an MCP server with the URL above → **Authenticate** → sign in → **Allow**.
+- **ChatGPT desktop app** — **Plugins → MCP** → add a server, transport **Streamable HTTP**, the URL above, token/header fields left empty → **Authenticate** (no restart needed). Your browser opens app.seameet.ai/connect → sign in → **Allow**. The consent page warns that SeaMeet "doesn't recognize this app's address": the desktop app receives the sign-in on a local `127.0.0.1` address, so that is expected.
+- **Claude Code** — `claude mcp add --transport http seameet https://mcp.seameet.ai/mcp`, then run `/mcp` to sign in. (Should work; not yet verified end to end.)
+
+The connector asks for read + write access. Read-only tools carry `readOnlyHint`, so clients that honor it can tell them apart from the write tools.
+
+**Hosted tools (15):**
+
+| Tool | Access | What it does |
+|---|---|---|
+| `seameet_list_recent_recordings` | read | Your most recent synced recordings |
+| `seameet_get_recording` | read | A recording's summary, transcript, notes, chapters and more |
+| `seameet_search_recordings` | read | Full-text search over your recordings and the ones shared with you (snippets need Sync Pro) |
+| `seameet_search_memory` | read | Find people, organizations and topics in Meeting Memory |
+| `seameet_get_memory_page` | read | A Meeting Memory page with the meetings it cites |
+| `seameet_whats_changed` | read | Catch up across 2–5 related recordings, oldest first, with citations |
+| `seameet_get_media_url` | read | A temporary stream/download link for a recording |
+| `seameet_get_usage` | read | Storage used versus your quota |
+| `seameet_desktop_recording_help` | read | How to record with the SeaMeet desktop app |
+| `seameet_list_webhooks` | read | Your webhooks, their delivery health and signing secret |
+| `seameet_rename_speakers` | write | Rename the speakers in a transcript |
+| `seameet_regenerate_recording_summary` | write | Regenerate a recording's summary |
+| `seameet_create_webhook` | write | Create a webhook (Sync Pro) |
+| `seameet_update_webhook` | write | Change a webhook |
+| `seameet_delete_webhook` | write | Delete a webhook |
+
+**Disconnect:** remove the connector in the app, and revoke its key, named `Connector: <app>`, under **API keys** at [app.seameet.ai/account](https://app.seameet.ai/account).
 
 ## Install
 
@@ -140,6 +194,8 @@ Just ask in plain language — the agent picks the right tool (and the right bac
 - "Now show its action items and key decisions."
 - "Pull the full speaker-labeled transcript for it, and its chapters."
 - "Get me a download/stream link for that recording's media."
+- "Search my meetings for 'pricing'." · "What does Meeting Memory know about Acme?"
+- "What changed across my last three standups?"
 - "Transcribe ~/Downloads/interview.m4a" *(uploads it, then checks back until the transcript is ready)*
 - "How much SeaMeet storage am I using versus my quota?"
 - "Create a webhook to `https://webhook.site/<your-id>` that fires when AI results are ready."
@@ -153,7 +209,7 @@ Just ask in plain language — the agent picks the right tool (and the right bac
 
 ## How it works
 
-A thin stdio↔HTTP proxy. The SeaMeet desktop app hosts a localhost-only bridge (`127.0.0.1:3741`, fallbacks 3742/3743) authenticated with a per-launch random secret; on startup it writes credentials to `$TMPDIR/seameet-mcp-bridge-<username>.json` (mode 0600), which this server reads and proxies (`tools/list` → `GET /mcp-bridge/tools`, `tools/call` → `POST /mcp-bridge/call-tool`). Nothing leaves your machine in desktop mode. Cloud mode talks to the hosted SeaMeet worker over HTTPS with your minted key.
+A thin stdio↔HTTP proxy. The SeaMeet desktop app hosts a localhost-only bridge (`127.0.0.1:3741`, fallbacks 3742/3743) authenticated with a per-launch random secret; on startup it writes credentials to `$TMPDIR/seameet-mcp-bridge-<username>.json` (mode 0600), which this server reads and proxies (`tools/list` → `GET /mcp-bridge/tools`, `tools/call` → `POST /mcp-bridge/call-tool`). Nothing leaves your machine in desktop mode. Cloud mode talks to the hosted SeaMeet worker (the same server as the [hosted connector](#hosted-connector-no-install)) over HTTPS with your minted key. Every request to SeaMeet's cloud carries `User-Agent: seameet-mcp/<version>`.
 
 Full tool reference (for LLMs): [seameet.ai/llms.txt](https://seameet.ai/llms.txt) — also served locally at `http://localhost:3741/llms.txt` while the app runs.
 
