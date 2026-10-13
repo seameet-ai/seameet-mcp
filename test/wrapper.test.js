@@ -27,7 +27,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import {
   discoverCredentials, credentialsFilePath, appNotRunningPayload, appOutdatedPayload, STATUS_TOOL,
-  loadCloudKey, cloudCredentialPath,
+  loadCloudKey, cloudCredentialPath, PACKAGE_VERSION,
 } from '../src/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -106,12 +106,13 @@ const FAKE_CLOUD_TOOLS = [
 const MINTED_KEY = 'smk_minted00000000000000000000000000000000';
 
 function startFakeCloud() {
-  const state = { approved: false, calls: [], rejectKey: null };
+  const state = { approved: false, calls: [], rejectKey: null, userAgents: [] };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
+      state.userAgents.push({ url: req.url, ua: req.headers['user-agent'] });
       const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
       if (req.url === '/mcp') {
         const auth = req.headers['authorization'] || '';
@@ -256,6 +257,11 @@ async function run() {
       assert.ok(!res.isError, `expected success, got ${res.content[0].text}`);
       const last = cloud.state.calls[cloud.state.calls.length - 1];
       assert.strictEqual(last.auth, `Bearer ${MINTED_KEY}`, 'used the minted key');
+    });
+    await test('every request to the cloud (worker + device flow) sends User-Agent: seameet-mcp/<version>', async () => {
+      const urls = new Set(cloud.state.userAgents.map((h) => h.url));
+      assert.ok(urls.has('/mcp') && urls.has('/device'), `saw ${[...urls].join(',')}`);
+      for (const h of cloud.state.userAgents) assert.strictEqual(h.ua, `seameet-mcp/${PACKAGE_VERSION}`, h.url);
     });
     await test('seameet_logout forgets the key → next cloud call re-challenges', async () => {
       const lo = await c2.callTool({ name: 'seameet_logout', arguments: {} });

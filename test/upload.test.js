@@ -29,7 +29,7 @@ import {
   MAX_FILE_BYTES, MAX_JSON_BYTES, MAX_PARTS_IN_FLIGHT, PART_BYTES, PART_PUT_BASE_TIMEOUT_MS, PART_PUT_TIMEOUT_MS, TRANSCRIBE_TOOL, anySignal, checkFile, cutCodePoints, partCount, pollAfterSeconds,
   transcribeFile, uploadConfig,
 } from '../src/upload.js';
-import { forgetCachedKeyIf } from '../src/index.js';
+import { forgetCachedKeyIf, PACKAGE_VERSION } from '../src/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(__dirname, '..', 'bin', 'seameet-mcp.js');
@@ -334,6 +334,15 @@ async function main() {
       { a: 'Bearer anon-test', k: 'anon-test', x: KEY, c: 'application/json' },
     );
     for (const c of calls.filter((x) => x.kind === 'stt')) assert.strictEqual(c.headers['X-Api-Key'], KEY);
+  });
+  await test('every sync-api and stt-proxy call sends User-Agent: seameet-mcp/<package version>', async () => {
+    const { result, calls } = await run(small);
+    assert.strictEqual(result.success, true);
+    const expected = `seameet-mcp/${PACKAGE_VERSION}`;
+    assert.match(expected, /^seameet-mcp\/\d+\.\d+\.\d+/);
+    const api = calls.filter((c) => c.kind === 'sync' || c.kind === 'stt');
+    assert.ok(api.some((c) => c.kind === 'sync') && api.some((c) => c.kind === 'stt'));
+    for (const c of api) assert.strictEqual(c.headers['User-Agent'], expected, `${c.op || c.route}`);
   });
   await test('hasVideo: mp4 with a picture → video; audio-only mp4 → audio; mov with a failed probe → video; mp3 never', async () => {
     const mp4 = tmpFile('screen.mp4', 100);
