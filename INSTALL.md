@@ -250,9 +250,8 @@ pages, and webhooks.
   **Authenticate** → sign in → **Allow**.
 - **ChatGPT desktop app:** **Plugins → MCP** → add a server, transport **Streamable HTTP**, the URL
   above, leave the token/header fields empty → **Authenticate** (no restart needed). Your browser
-  opens app.seameet.ai/connect → sign in → **Allow**. The consent page warns that SeaMeet
-  "doesn't recognize this app's address" because the desktop app receives the sign-in on a local
-  `127.0.0.1` address — that's expected.
+  opens app.seameet.ai/connect → sign in → **Allow**. The consent page notes that this app finishes
+  signing in on your own computer (a local `127.0.0.1` address) — that's expected for desktop apps.
 - **Claude Code:** this should work, though it isn't verified end to end yet:
 
   ```bash
@@ -261,8 +260,10 @@ pages, and webhooks.
 
   then run `/mcp` to sign in.
 
-The connector requests read + write access. To disconnect, remove it in the app and revoke its key
-(`Connector: <app>`) under **API keys** at <https://app.seameet.ai/account>.
+Claude asks for read access; the ChatGPT desktop app also asks for write (rename speakers,
+regenerate summaries, manage webhooks). The same steps are at
+<https://app.seameet.ai/connectors> (profile menu → **Connect with Claude/ChatGPT**). That page
+also lists the apps you've connected, each with a **Disconnect** button.
 
 > **Agent reading this:** if you are a chat app (claude.ai, ChatGPT) rather than a coding agent with
 > a config file, you can't add the connector yourself — give the user the steps above for their app.

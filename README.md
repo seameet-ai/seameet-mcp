@@ -63,10 +63,10 @@ In short: chat apps and cloud-only use → the hosted connector. A coding agent 
 - **Claude on the web** — open [claude.ai/new#customize/connectors/yours](https://claude.ai/new#customize/connectors/yours) (or **Settings → Connectors**) → **Add custom connector** → name `SeaMeet`, URL `https://mcp.seameet.ai/mcp` → **Add** → **Connect** → sign in on app.seameet.ai → **Allow**. A connector added on claude.ai also shows up in the Claude desktop and mobile apps.
 - **Claude desktop app** — **Settings → Connectors → Add custom connector**, same URL, same sign-in.
 - **ChatGPT on the web** — open [chatgpt.com/plugins](https://chatgpt.com/plugins) → add an MCP server with the URL above → **Authenticate** → sign in → **Allow**.
-- **ChatGPT desktop app** — **Plugins → MCP** → add a server, transport **Streamable HTTP**, the URL above, token/header fields left empty → **Authenticate** (no restart needed). Your browser opens app.seameet.ai/connect → sign in → **Allow**. The consent page warns that SeaMeet "doesn't recognize this app's address": the desktop app receives the sign-in on a local `127.0.0.1` address, so that is expected.
+- **ChatGPT desktop app** — **Plugins → MCP** → add a server, transport **Streamable HTTP**, the URL above, token/header fields left empty → **Authenticate** (no restart needed). Your browser opens app.seameet.ai/connect → sign in → **Allow**. The consent page notes that this app finishes signing in on your own computer (a local `127.0.0.1` address); that is expected for desktop apps.
 - **Claude Code** — `claude mcp add --transport http seameet https://mcp.seameet.ai/mcp`, then run `/mcp` to sign in. (Should work; not yet verified end to end.)
 
-The connector asks for read + write access. Read-only tools carry `readOnlyHint`, so clients that honor it can tell them apart from the write tools.
+Claude asks for read access; the ChatGPT desktop app also asks for write. Read-only tools carry `readOnlyHint`, so clients that honor it can tell them apart from the write tools.
 
 **Hosted tools (15):**
 
@@ -88,7 +88,7 @@ The connector asks for read + write access. Read-only tools carry `readOnlyHint`
 | `seameet_update_webhook` | write | Change a webhook |
 | `seameet_delete_webhook` | write | Delete a webhook |
 
-**Disconnect:** remove the connector in the app, and revoke its key, named `Connector: <app>`, under **API keys** at [app.seameet.ai/account](https://app.seameet.ai/account).
+**Disconnect:** open [app.seameet.ai/connectors](https://app.seameet.ai/connectors) (profile menu → **Connect with Claude/ChatGPT**), click **Disconnect** next to the app, then remove the connector in the app.
 
 ## Install
 
