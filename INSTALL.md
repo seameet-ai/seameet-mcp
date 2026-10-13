@@ -236,7 +236,7 @@ for where its config lives.
 
 SeaMeet hosts an MCP server at **`https://mcp.seameet.ai/mcp`** that you sign in to with your
 SeaMeet account (OAuth). Nothing to install and no API key. It serves your **cloud library** only
-(15 tools: recordings, transcripts, search, Meeting Memory, webhooks); for the desktop recorder
+(19 tools: recordings, transcripts, search, Meeting Memory, Trash, webhooks); for the desktop recorder
 tools or to transcribe a file on this computer, use `npx -y @seameet/mcp` above. Any verified
 SeaMeet account works, Free included; Sync Pro unlocks full search snippets, full Meeting Memory
 pages, and webhooks.

@@ -27,20 +27,21 @@ It picks the richest available backend automatically and exposes the union of bo
 - Rename a file — `seameet_rename_file` · save a new artifact — `seameet_save_artifact` · **regenerate a summary** from a template — `seameet_regenerate_summary` · list templates — `seameet_list_templates`
 
 **☁️ Cloud library** *(cloud mode)*
-- List recent synced recordings, including files you transcribed on [app.seameet.ai](https://app.seameet.ai/transcribe) — `seameet_list_recent_recordings` · fetch the summary, the speaker-labeled transcript (paged for long recordings) and chapters, plus action items and key decisions for desktop recordings — `seameet_get_recording`
+- List recent synced recordings, including files you transcribed on [app.seameet.ai](https://app.seameet.ai/transcribe) — `seameet_list_recent_recordings` · fetch the summary, the speaker-labeled transcript (paged for long recordings) and chapters, plus action items and key decisions where the summary produced them; the transcript also comes as the same **SRT or VTT** file app.seameet.ai downloads — `seameet_get_recording` · one section (summary, action items, decisions, chapters) of up to 10 recordings at once — `seameet_get_recordings`
 - **Transcribe a file from this computer** — upload a local audio or video file (mp3, m4a, mp4, mov, wav, flac, ogg, oga, opus, webm, aac, amr, spx; up to 512 MB and 5 hours) and start a speaker-labeled transcription; it returns an `assetId` right away and tells the agent when to poll `seameet_get_recording` — `seameet_transcribe_file` *(runs in this local client, so it works in Claude Code, Codex, Cursor and Claude Desktop, but not from claude.ai on the web; uses your transcription allowance)*
 - Get a temporary media **stream/download URL** — `seameet_get_media_url`
 - **Search** your recordings and the ones shared with you — `seameet_search_recordings` *(full snippets need Sync Pro)*
 - **Meeting Memory** — find people, organizations and topics — `seameet_search_memory` · read a Memory page with the meetings it cites — `seameet_get_memory_page`
 - **Catch up** across 2–5 related recordings, oldest first, with citations — `seameet_whats_changed`
-- Rename speakers — `seameet_rename_speakers` · regenerate a recording's summary — `seameet_regenerate_recording_summary`
+- Rename speakers — `seameet_rename_speakers` · regenerate a recording's summary — `seameet_regenerate_recording_summary` · rename a recording — `seameet_rename_recording`
+- Move up to 20 recordings to the **Trash** (restorable for 30 days) — `seameet_trash_recordings` · restore them — `seameet_restore_recordings` · list the Trash — `seameet_list_recent_recordings` with `trashed: true` *(deleting forever stays on app.seameet.ai)*
 - Check storage usage — `seameet_get_usage` · how to record with the desktop app — `seameet_desktop_recording_help`
 - Manage outbound **webhooks** (signed deliveries on `ai.ready` / `recording.synced`; creating one needs Sync Pro) — `seameet_create_webhook` · `seameet_list_webhooks` · `seameet_update_webhook` · `seameet_delete_webhook`
 
 **🔌 Connection** *(any mode)*
 - Which modes are connected — `seameet_status` · disconnect cloud / switch accounts — `seameet_logout`
 
-That's **17 desktop tools + 15 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
+That's **17 desktop tools + 19 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
 
 ## Hosted connector (no install)
 
@@ -52,7 +53,7 @@ SeaMeet also runs a hosted MCP server at **`https://mcp.seameet.ai/mcp`**. Add i
 |---|---|---|
 | Install | none, add a URL | `npx -y @seameet/mcp` |
 | Works in | Claude (web, desktop, mobile), ChatGPT (web, desktop), Claude Code, any client that speaks remote MCP with OAuth | Claude Code, Claude Desktop, Codex, Cursor, Antigravity, OpenCode, Copilot CLI, any stdio MCP client |
-| Your cloud library (recordings, transcripts, search, Memory, webhooks) | ✓ 15 tools | ✓ the same 15, relayed |
+| Your cloud library (recordings, transcripts, search, Memory, webhooks) | ✓ 19 tools | ✓ the same 19, relayed |
 | Record, screenshot, live transcript from the desktop app | — | ✓ 17 desktop tools |
 | Transcribe a file on this computer | — | ✓ `seameet_transcribe_file` |
 
@@ -68,12 +69,13 @@ In short: chat apps and cloud-only use → the hosted connector. A coding agent 
 
 Claude asks for read access; the ChatGPT desktop app also asks for write. Read-only tools carry `readOnlyHint`, so clients that honor it can tell them apart from the write tools.
 
-**Hosted tools (15):**
+**Hosted tools (19):**
 
 | Tool | Access | What it does |
 |---|---|---|
 | `seameet_list_recent_recordings` | read | Your most recent synced recordings |
-| `seameet_get_recording` | read | A recording's summary, transcript, notes, chapters and more |
+| `seameet_get_recording` | read | A recording's summary, transcript (also as SRT or VTT), notes, chapters and more |
+| `seameet_get_recordings` | read | One section of up to 10 recordings at once, e.g. this week's action items |
 | `seameet_search_recordings` | read | Full-text search over your recordings and the ones shared with you (snippets need Sync Pro) |
 | `seameet_search_memory` | read | Find people, organizations and topics in Meeting Memory |
 | `seameet_get_memory_page` | read | A Meeting Memory page with the meetings it cites |
@@ -84,6 +86,9 @@ Claude asks for read access; the ChatGPT desktop app also asks for write. Read-o
 | `seameet_list_webhooks` | read | Your webhooks, their delivery health and signing secret |
 | `seameet_rename_speakers` | write | Rename the speakers in a transcript |
 | `seameet_regenerate_recording_summary` | write | Regenerate a recording's summary |
+| `seameet_rename_recording` | write | Rename a recording |
+| `seameet_trash_recordings` | write | Move up to 20 recordings to the Trash (restorable for 30 days) |
+| `seameet_restore_recordings` | write | Restore recordings from the Trash |
 | `seameet_create_webhook` | write | Create a webhook (Sync Pro) |
 | `seameet_update_webhook` | write | Change a webhook |
 | `seameet_delete_webhook` | write | Delete a webhook |
