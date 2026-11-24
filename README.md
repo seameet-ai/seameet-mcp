@@ -24,6 +24,7 @@ It picks the richest available backend automatically and exposes the union of bo
 - Read generated **artifacts** (summary, transcript, SRT, chapters, action items, key decisions, screenshot OCR/description) — `seameet_get_artifact`
 - **Search** across artifact text — `seameet_search_text`
 - Fetch a recording's asset-bundle manifest — `seameet_get_asset_bundle`
+- **Posters** — a recording's one-page illustrated summary image: check for one and get short-lived image links — `seameet_get_poster` · ask for one — `seameet_make_poster` *(uses your poster allowance and takes about a minute, so poll `seameet_get_poster`; needs a signed-in desktop app and a recording that is in your cloud library; the desktop app must be a version that has posters)*
 - Rename a file — `seameet_rename_file` · save a new artifact — `seameet_save_artifact` · **regenerate a summary** from a template — `seameet_regenerate_summary` · list templates — `seameet_list_templates`
 
 **☁️ Cloud library** *(cloud mode)*
@@ -41,7 +42,7 @@ It picks the richest available backend automatically and exposes the union of bo
 **🔌 Connection** *(any mode)*
 - Which modes are connected — `seameet_status` · disconnect cloud / switch accounts — `seameet_logout`
 
-That's **17 desktop tools + 19 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
+That's **19 desktop tools + 19 cloud tools** (fetched live, so new releases appear automatically), plus 3 tools that run in this client (`seameet_status`, `seameet_logout`, `seameet_transcribe_file`). A tool the current backend can't serve returns a clear, structured error instead of failing silently.
 
 ## Hosted connector (no install)
 
@@ -54,7 +55,7 @@ SeaMeet also runs a hosted MCP server at **`https://mcp.seameet.ai/mcp`**. Add i
 | Install | none, add a URL | `npx -y @seameet/mcp` |
 | Works in | Claude (web, desktop, mobile), ChatGPT (web, desktop), Claude Code, any client that speaks remote MCP with OAuth | Claude Code, Claude Desktop, Codex, Cursor, Antigravity, OpenCode, Copilot CLI, any stdio MCP client |
 | Your cloud library (recordings, transcripts, search, Memory, webhooks) | ✓ 19 tools | ✓ the same 19, relayed |
-| Record, screenshot, live transcript from the desktop app | — | ✓ 17 desktop tools |
+| Record, screenshot, live transcript from the desktop app | — | ✓ 19 desktop tools |
 | Transcribe a file on this computer | — | ✓ `seameet_transcribe_file` |
 
 In short: chat apps and cloud-only use → the hosted connector. A coding agent on the same machine as the SeaMeet desktop app, or uploading local files → this package.

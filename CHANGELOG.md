@@ -7,6 +7,12 @@ All notable changes to `@seameet/mcp`. Format based on
 ## [Unreleased]
 
 ### Added
+- **Posters (desktop mode).** With a SeaMeet desktop app that has them, agents can
+  read a recording's poster (`seameet_get_poster`: status, style, shape and
+  short-lived image links) and ask for one (`seameet_make_poster`, which uses the
+  user's poster allowance and takes about a minute). No update of this package
+  is needed: desktop tools are fetched live. Cloud mode has no poster tools yet:
+  the hosted server cannot reach the posters service with an API key.
 - **Docs: the hosted SeaMeet connector.** Claude and ChatGPT users can now add
   `https://mcp.seameet.ai/mcp` as a connector and sign in with their SeaMeet
   account: no install, no API key. The README and INSTALL.md cover adding it to
